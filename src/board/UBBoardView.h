@@ -33,6 +33,7 @@
 
 #include <QtGui>
 #include <QGraphicsView>
+#include <QQueue>
 #include <QRubberBand>
 
 #include "core/UB.h"
@@ -96,6 +97,7 @@ protected:
     void handleItemMouseMove(QMouseEvent *event);
 
     virtual bool event (QEvent * e);
+    bool viewportEvent(QEvent* event) override;
 
     virtual void keyPressEvent(QKeyEvent *event);
     virtual void tabletEvent(QTabletEvent * event);
@@ -163,6 +165,7 @@ private:
     bool mOkOnWidget;
 
     bool mWidgetMoved;
+    QPointer<UBGraphicsItemDelegate> mMovingItemUndoDelegate;
     QPointF mFirstPressedMousePos;
     QPointF mLastPressedMousePos;
     QList<QPointF> mCornerPoints;
@@ -213,8 +216,98 @@ private:
 
     static bool hasSelectedParents(QGraphicsItem * item);
 
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    enum class TouchSessionState
+    {
+        Idle,       // no touch sequence in progress
+        Pending,    // first finger down, gesture window still open
+        Active,     // committed to drawing / synthetic mouse
+        Gesture,    // two-finger pan/zoom until all fingers lift
+        Suppressed  // sequence alive but ignored (pen active, tool change, ...)
+    };
+
+    enum class TouchSuppressionMode
+    {
+        Commit,
+        Cancel
+    };
+
+    struct TouchSession
+    {
+        TouchSessionState state = TouchSessionState::Idle;
+        QHash<int, int> touchToPointer;
+        QHash<int, QPointF> touchPositions;
+
+        int firstTouchId = -1;
+        qreal firstTouchTravelPx = 0;
+        int toolAtStart = -1;
+        bool sceneWasModified = false;  // the scene's modified flag when the session started
+        bool committedChanges = false;  // this session pushed scene changes onto the undo stack
+
+        bool deferredMousePending = false;
+        bool syntheticMousePressed = false;
+        quint64 syntheticMouseSequenceId = 0;
+        QPointF deferredMousePos;
+        QPointF deferredMouseLastPos;
+        Qt::KeyboardModifiers deferredMouseModifiers = Qt::NoModifier;
+
+        int gestureTouchIds[2] = {-1, -1};
+        QPointF gestureLastPos[2];
+    };
+
+    struct SyntheticMouseEvent
+    {
+        QEvent::Type type = QEvent::None;
+        QPointF viewportPos;
+        Qt::KeyboardModifiers modifiers = Qt::NoModifier;
+        quint64 sequenceId = 0;
+        bool cancel = false;
+    };
+
+    bool handleTouchEvent(QTouchEvent* event);
+    void touchPointPressed(const QEventPoint& point, QTouchEvent* event);
+    void touchPointMoved(const QEventPoint& point, QTouchEvent* event);
+    void touchPointReleased(const QEventPoint& point, QTouchEvent* event);
+    void promotePendingSession(bool deliverDeferredMove = true);
+    void engageGesture(const QEventPoint& firstPoint, const QEventPoint& secondPoint);
+    void updateGesture();
+
+    // Session teardown comes in three layers:
+    //  - suppressTouchSession() commits or cancels all scene / synthetic-mouse
+    //    work, but keeps tracking fingers until they lift (state Suppressed);
+    //  - finalizeTouchSession() also flushes the synthetic mouse queue, so all
+    //    effects of the session are applied when it returns;
+    //  - endTouchSession() resets the bookkeeping once no fingers remain.
+    void endTouchSession();
+    void suppressTouchSession(TouchSuppressionMode mode);
+    void finalizeTouchSession(TouchSuppressionMode mode = TouchSuppressionMode::Commit);
+    void queueSyntheticMouse(QEvent::Type type, const QPointF& viewportPos,
+                             Qt::KeyboardModifiers modifiers, bool cancel = false);
+    void dispatchSyntheticMouseEvent(const SyntheticMouseEvent& event);
+    void flushSyntheticMouseEvents();
+    bool cancelSyntheticMouse();
+    void discardQueuedSyntheticMouse(quint64 sequenceId);
+    QPointF touchScenePos(const QPointF& viewportPos);
+    bool touchIsInkTool(int tool) const;
+    int gestureWindowMs() const;
+    qreal gestureMoveThresholdPx() const;
+
+    TouchSession mTouchSession;
+    QTimer mTouchPromotionTimer;
+    bool mMultitouchEnabled{false};
+    int mNextTouchPointerId{1};
+    QQueue<SyntheticMouseEvent> mSyntheticMouseQueue;
+    QTimer mSyntheticMouseDispatchTimer;
+    bool mDispatchingSyntheticMouseEvent{false};
+    quint64 mNextSyntheticMouseSequenceId{1};
+    quint64 mDeliveredSyntheticMouseSequenceId{0};
+#endif
+
 private slots:
     void settingChanged(QVariant newValue);
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    void multitouchSettingChanged(QVariant newValue);
+#endif
     void movingItemDestroyed(QObject* item = nullptr);
 
 public slots:

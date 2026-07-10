@@ -141,6 +141,10 @@ UBBoardView::UBBoardView (UBBoardController* pController, int pStartLayer, int p
 
 UBBoardView::~UBBoardView ()
 {
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    finalizeTouchSession();
+#endif
+
     if (suspendedMousePressEvent){
         delete suspendedMousePressEvent;
         suspendedMousePressEvent = NULL;
@@ -157,6 +161,27 @@ void UBBoardView::init ()
 
     connect (UBSettings::settings ()->boardUseHighResTabletEvent, SIGNAL (changed (QVariant)),
              this, SLOT (settingChanged (QVariant)));
+
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    connect (UBSettings::settings ()->boardMultitouchEnabled, SIGNAL (changed (QVariant)),
+             this, SLOT (multitouchSettingChanged (QVariant)));
+
+    connect(UBDrawingController::drawingController(), &UBDrawingController::stylusToolAboutToChange,
+            this, [this]() { finalizeTouchSession(); });
+
+    mTouchPromotionTimer.setSingleShot(true);
+    connect(&mTouchPromotionTimer, &QTimer::timeout, this, [this]() {
+        promotePendingSession();
+    });
+
+    mSyntheticMouseDispatchTimer.setSingleShot(true);
+    connect(&mSyntheticMouseDispatchTimer, &QTimer::timeout,
+            this, &UBBoardView::flushSyntheticMouseEvents);
+
+    // Note: a scene switch finalizes the touch session through forcedTabletRelease(),
+    // which UBBoardController::setActiveDocumentScene calls before swapping the scene;
+    // reacting to activeSceneChanged would come too late to commit to the old scene.
+#endif
 
     connect(mController, &UBBoardController::controlViewportChanged, this, [this](){
         if (scene())
@@ -188,6 +213,9 @@ void UBBoardView::init ()
     mVirtualKeyboardActive = false;
 
     settingChanged (QVariant ());
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    multitouchSettingChanged (QVariant ());
+#endif
 
     unsetCursor();
 
@@ -307,6 +335,11 @@ void UBBoardView::keyPressEvent (QKeyEvent *event)
 
 bool UBBoardView::event (QEvent * e)
 {
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    if (e->type() == QEvent::WindowDeactivate || e->type() == QEvent::Hide)
+        finalizeTouchSession();
+#endif
+
     if (e->type () == QEvent::Gesture)
     {
         QGestureEvent *gestureEvent = dynamic_cast<QGestureEvent *> (e);
@@ -333,8 +366,653 @@ bool UBBoardView::event (QEvent * e)
     return QGraphicsView::event (e);
 }
 
+bool UBBoardView::viewportEvent(QEvent* event)
+{
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    switch (event->type())
+    {
+    case QEvent::TouchBegin:
+    case QEvent::TouchUpdate:
+    case QEvent::TouchEnd:
+    case QEvent::TouchCancel:
+    {
+        // mMultitouchEnabled is false on views that never take touch input
+        // (see multitouchSettingChanged)
+        if (!mMultitouchEnabled)
+            break;
+
+        QTouchEvent* touchEvent = static_cast<QTouchEvent*>(event);
+        const QPointingDevice* device = touchEvent->pointingDevice();
+
+        if (device && device->type() != QInputDevice::DeviceType::TouchScreen)
+            break;
+
+        if (!device && mTouchSession.state == TouchSessionState::Idle)
+            break;
+
+        return handleTouchEvent(touchEvent);
+    }
+    default:
+        break;
+    }
+#endif
+
+    return QGraphicsView::viewportEvent(event);
+}
+
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+bool UBBoardView::handleTouchEvent(QTouchEvent* event)
+{
+    if (event->type() == QEvent::TouchCancel)
+    {
+        suppressTouchSession(TouchSuppressionMode::Cancel);
+        endTouchSession();
+
+        event->accept();
+        return true;
+    }
+
+    if (event->type() == QEvent::TouchBegin)
+    {
+        if (mTouchSession.state != TouchSessionState::Idle)
+        {
+            suppressTouchSession(TouchSuppressionMode::Commit);
+            endTouchSession();
+        }
+
+        if (mMouseButtonIsPressed || mTabletStylusIsPressed || mPendingStylusReleaseEvent)
+            mTouchSession.state = TouchSessionState::Suppressed;
+    }
+
+    for (const QEventPoint& point : event->points())
+        mTouchSession.touchPositions.insert(point.id(), point.position());
+
+    for (const QEventPoint& point : event->points())
+    {
+        if (point.state() == QEventPoint::Updated)
+            touchPointMoved(point, event);
+    }
+
+    for (const QEventPoint& point : event->points())
+    {
+        if (point.state() == QEventPoint::Pressed)
+            touchPointPressed(point, event);
+    }
+
+    if (mTouchSession.state == TouchSessionState::Gesture)
+    {
+        bool gesturePointReleased = false;
+
+        for (const QEventPoint& point : event->points())
+        {
+            if (point.state() == QEventPoint::Released
+                && (point.id() == mTouchSession.gestureTouchIds[0]
+                    || point.id() == mTouchSession.gestureTouchIds[1]))
+            {
+                gesturePointReleased = true;
+                break;
+            }
+        }
+
+        if (!gesturePointReleased)
+            updateGesture();
+    }
+
+    for (const QEventPoint& point : event->points())
+    {
+        if (point.state() == QEventPoint::Released)
+            touchPointReleased(point, event);
+    }
+
+    if (mTouchSession.touchPositions.isEmpty())
+        endTouchSession();
+
+    event->accept();
+    return true;
+}
+
+void UBBoardView::touchPointPressed(const QEventPoint& point, QTouchEvent* event)
+{
+    if (mTouchSession.state == TouchSessionState::Suppressed
+        || mTouchSession.state == TouchSessionState::Gesture)
+    {
+        return;
+    }
+
+    if (mTouchSession.state == TouchSessionState::Idle)
+    {
+        mTouchSession.state = TouchSessionState::Pending;
+        mTouchSession.firstTouchId = point.id();
+        mTouchSession.toolAtStart = UBDrawingController::drawingController()->stylusTool();
+        mTouchSession.sceneWasModified = scene() && scene()->isModified();
+        mTouchSession.deferredMousePos = point.pressPosition();
+        mTouchSession.deferredMouseLastPos = point.position();
+        mTouchSession.deferredMouseModifiers = event->modifiers();
+
+        const bool directInk = touchIsInkTool(mTouchSession.toolAtStart)
+            && UBDrawingController::drawingController()->activeRuler() == nullptr;
+
+        if (directInk && scene())
+        {
+            const int pointerId = mNextTouchPointerId++;
+
+            if (scene()->inputDevicePress(touchScenePos(point.position()), 1.0, event->modifiers(), pointerId))
+                mTouchSession.touchToPointer.insert(point.id(), pointerId);
+        }
+        else
+        {
+            mTouchSession.deferredMousePending = true;
+        }
+
+        if (bIsControl)
+        {
+            mTouchPromotionTimer.start(gestureWindowMs());
+        }
+        else
+        {
+            promotePendingSession();
+        }
+
+        return;
+    }
+
+    if (mTouchSession.state == TouchSessionState::Pending && bIsControl)
+    {
+        const QEventPoint* firstPoint = nullptr;
+
+        for (const QEventPoint& candidate : event->points())
+        {
+            if (candidate.id() == mTouchSession.firstTouchId)
+            {
+                firstPoint = &candidate;
+                break;
+            }
+        }
+
+        // Unsigned subtraction also handles the 32-bit timestamp wraparound
+        // used by Windows after long system uptimes.
+        if (firstPoint
+            && point.timestamp() - firstPoint->pressTimestamp()
+                <= static_cast<ulong>(gestureWindowMs())
+            && mTouchSession.firstTouchTravelPx < gestureMoveThresholdPx())
+        {
+            engageGesture(*firstPoint, point);
+            return;
+        }
+    }
+
+    if (mTouchSession.state == TouchSessionState::Pending)
+        promotePendingSession();
+
+    if (mTouchSession.state == TouchSessionState::Active
+        && touchIsInkTool(mTouchSession.toolAtStart)
+        && UBDrawingController::drawingController()->activeRuler() == nullptr
+        && scene())
+    {
+        const int pointerId = mNextTouchPointerId++;
+
+        if (scene()->inputDevicePress(touchScenePos(point.position()), 1.0, event->modifiers(), pointerId))
+            mTouchSession.touchToPointer.insert(point.id(), pointerId);
+    }
+}
+
+void UBBoardView::touchPointMoved(const QEventPoint& point, QTouchEvent* event)
+{
+    if (mTouchSession.state == TouchSessionState::Gesture
+        || mTouchSession.state == TouchSessionState::Suppressed)
+    {
+        return;
+    }
+
+    if (point.id() == mTouchSession.firstTouchId)
+    {
+        mTouchSession.firstTouchTravelPx = qMax(
+            mTouchSession.firstTouchTravelPx,
+            QLineF(point.pressPosition(), point.position()).length());
+        mTouchSession.deferredMouseLastPos = point.position();
+
+        if (mTouchSession.state == TouchSessionState::Pending)
+        {
+            const ulong elapsed = point.timestamp() - point.pressTimestamp();
+
+            if (elapsed > static_cast<ulong>(gestureWindowMs())
+                || mTouchSession.firstTouchTravelPx >= gestureMoveThresholdPx())
+            {
+                promotePendingSession(false);
+            }
+        }
+    }
+
+    const auto pointerIt = mTouchSession.touchToPointer.constFind(point.id());
+
+    if (pointerIt != mTouchSession.touchToPointer.constEnd())
+    {
+        if (scene())
+            scene()->inputDeviceMove(touchScenePos(point.position()), 1.0, event->modifiers(), pointerIt.value());
+    }
+    else if (point.id() == mTouchSession.firstTouchId && mTouchSession.syntheticMousePressed)
+    {
+        queueSyntheticMouse(QEvent::MouseMove, point.position(), event->modifiers());
+    }
+}
+
+void UBBoardView::touchPointReleased(const QEventPoint& point, QTouchEvent* event)
+{
+    if (mTouchSession.state == TouchSessionState::Gesture)
+    {
+        if (point.id() == mTouchSession.gestureTouchIds[0]
+            || point.id() == mTouchSession.gestureTouchIds[1])
+        {
+            mTouchSession.state = TouchSessionState::Suppressed;
+        }
+    }
+    else if (mTouchSession.state != TouchSessionState::Suppressed)
+    {
+        if (mTouchSession.state == TouchSessionState::Pending
+            && point.id() == mTouchSession.firstTouchId)
+        {
+            mTouchPromotionTimer.stop();
+
+            if (mTouchSession.deferredMousePending)
+            {
+                promotePendingSession(false);
+
+                if (mTouchSession.state == TouchSessionState::Active
+                    && mTouchSession.syntheticMousePressed
+                    && mTouchSession.deferredMouseLastPos != mTouchSession.deferredMousePos)
+                {
+                    queueSyntheticMouse(QEvent::MouseMove, mTouchSession.deferredMouseLastPos,
+                                        event->modifiers());
+                }
+            }
+        }
+
+        const auto pointerIt = mTouchSession.touchToPointer.constFind(point.id());
+
+        if (pointerIt != mTouchSession.touchToPointer.constEnd())
+        {
+            if (scene())
+            {
+                const bool committed = scene()->inputDeviceRelease(
+                    -1, event->modifiers(), pointerIt.value());
+                mTouchSession.committedChanges |= committed;
+            }
+
+            mTouchSession.touchToPointer.remove(point.id());
+        }
+
+        if (point.id() == mTouchSession.firstTouchId && mTouchSession.syntheticMousePressed)
+        {
+            mTouchSession.syntheticMousePressed = false;
+            queueSyntheticMouse(QEvent::MouseButtonRelease, point.position(), event->modifiers());
+        }
+    }
+
+    mTouchSession.touchPositions.remove(point.id());
+}
+
+void UBBoardView::promotePendingSession(bool deliverDeferredMove)
+{
+    if (mTouchSession.state != TouchSessionState::Pending)
+        return;
+
+    mTouchPromotionTimer.stop();
+    mTouchSession.state = TouchSessionState::Active;
+
+    if (!mTouchSession.deferredMousePending)
+        return;
+
+    mTouchSession.deferredMousePending = false;
+    mTouchSession.syntheticMouseSequenceId = mNextSyntheticMouseSequenceId++;
+    mTouchSession.syntheticMousePressed = true;
+    queueSyntheticMouse(QEvent::MouseButtonPress, mTouchSession.deferredMousePos,
+                        mTouchSession.deferredMouseModifiers);
+
+    if (deliverDeferredMove
+        && mTouchSession.deferredMouseLastPos != mTouchSession.deferredMousePos)
+    {
+        queueSyntheticMouse(QEvent::MouseMove, mTouchSession.deferredMouseLastPos,
+                            mTouchSession.deferredMouseModifiers);
+    }
+}
+
+void UBBoardView::engageGesture(const QEventPoint& firstPoint, const QEventPoint& secondPoint)
+{
+    mTouchPromotionTimer.stop();
+
+    const auto pointerIt = mTouchSession.touchToPointer.constFind(firstPoint.id());
+
+    if (pointerIt != mTouchSession.touchToPointer.constEnd() && scene())
+    {
+        scene()->cancelStrokeForPointer(pointerIt.value());
+        scene()->setModified(mTouchSession.sceneWasModified);
+    }
+
+    mTouchSession.touchToPointer.remove(firstPoint.id());
+    mTouchSession.deferredMousePending = false;
+    mTouchSession.state = TouchSessionState::Gesture;
+    mTouchSession.gestureTouchIds[0] = firstPoint.id();
+    mTouchSession.gestureTouchIds[1] = secondPoint.id();
+    mTouchSession.gestureLastPos[0] = firstPoint.position();
+    mTouchSession.gestureLastPos[1] = secondPoint.position();
+}
+
+void UBBoardView::updateGesture()
+{
+    const int firstId = mTouchSession.gestureTouchIds[0];
+    const int secondId = mTouchSession.gestureTouchIds[1];
+
+    if (!mTouchSession.touchPositions.contains(firstId)
+        || !mTouchSession.touchPositions.contains(secondId))
+    {
+        return;
+    }
+
+    const QPointF firstPos = mTouchSession.touchPositions.value(firstId);
+    const QPointF secondPos = mTouchSession.touchPositions.value(secondId);
+    const QPointF oldCentroid = (mTouchSession.gestureLastPos[0] + mTouchSession.gestureLastPos[1]) / 2.0;
+    const QPointF newCentroid = (firstPos + secondPos) / 2.0;
+    const qreal oldDistance = QLineF(mTouchSession.gestureLastPos[0], mTouchSession.gestureLastPos[1]).length();
+    const qreal newDistance = QLineF(firstPos, secondPos).length();
+
+    if (oldDistance >= 10.0 && newDistance > 0.0)
+    {
+        const qreal ratio = newDistance / oldDistance;
+
+        const qreal oldZoom = mController->currentZoom();
+
+        if (qIsFinite(ratio) && ratio > 0.0
+            && qIsFinite(oldZoom) && oldZoom > 0.0)
+        {
+            // The toolbar can zoom out below 100%, so the lower bound must not
+            // exceed the current zoom or the first pinch update would jump to 1.0.
+            const qreal newZoom = qBound(qMin(oldZoom, 1.0), oldZoom * ratio,
+                                         static_cast<qreal>(UB_MAX_ZOOM));
+
+            if (!qFuzzyCompare(oldZoom, newZoom))
+                mController->zoom(newZoom / oldZoom, touchScenePos(oldCentroid));
+        }
+    }
+
+    const QPointF panDelta = newCentroid - oldCentroid;
+
+    if (!panDelta.isNull())
+        mController->handScroll(panDelta.x(), panDelta.y());
+
+    mTouchSession.gestureLastPos[0] = firstPos;
+    mTouchSession.gestureLastPos[1] = secondPos;
+}
+
+void UBBoardView::endTouchSession()
+{
+    mTouchPromotionTimer.stop();
+    Q_ASSERT(mTouchSession.touchToPointer.isEmpty());
+    Q_ASSERT(!mTouchSession.syntheticMousePressed);
+    mTouchSession = TouchSession();
+    mNextTouchPointerId = 1;
+}
+
+void UBBoardView::suppressTouchSession(TouchSuppressionMode mode)
+{
+    if (mTouchSession.state == TouchSessionState::Idle)
+        return;
+
+    mTouchPromotionTimer.stop();
+    const bool hadDirectPointerWork = !mTouchSession.touchToPointer.isEmpty();
+    bool canceledSyntheticSceneWork = false;
+    const auto currentScene = scene();
+
+    if (currentScene)
+    {
+        const QList<int> pointerIds = mTouchSession.touchToPointer.values();
+
+        for (int pointerId : pointerIds)
+        {
+            if (mode == TouchSuppressionMode::Commit)
+            {
+                const bool committed = currentScene->inputDeviceRelease(
+                    -1, Qt::NoModifier, pointerId);
+                mTouchSession.committedChanges |= committed;
+            }
+            else
+            {
+                currentScene->cancelStrokeForPointer(pointerId);
+            }
+        }
+    }
+
+    mTouchSession.touchToPointer.clear();
+    mTouchSession.deferredMousePending = false;
+
+    if (mTouchSession.syntheticMousePressed)
+    {
+        if (mode == TouchSuppressionMode::Cancel)
+            canceledSyntheticSceneWork = cancelSyntheticMouse();
+        else
+            queueSyntheticMouse(QEvent::MouseButtonRelease,
+                                mTouchSession.deferredMouseLastPos,
+                                mTouchSession.deferredMouseModifiers);
+
+        mTouchSession.syntheticMousePressed = false;
+    }
+
+    // Canceling scene work leaves the modified flag set even though nothing of
+    // this session survived; restore it, unless part of the session was already
+    // committed or the scene was modified before the session started.
+    if (mode == TouchSuppressionMode::Cancel
+        && (hadDirectPointerWork || canceledSyntheticSceneWork)
+        && currentScene)
+    {
+        currentScene->setModified(mTouchSession.sceneWasModified
+                                  || mTouchSession.committedChanges);
+    }
+
+    mTouchSession.state = mTouchSession.touchPositions.isEmpty()
+        ? TouchSessionState::Idle
+        : TouchSessionState::Suppressed;
+}
+
+void UBBoardView::finalizeTouchSession(TouchSuppressionMode mode)
+{
+    suppressTouchSession(mode);
+
+    // A legacy mouse handler can change the active tool while one of our
+    // synthetic events is being delivered. Let that handler return before
+    // dispatching the release queued by suppression.
+    if (!mDispatchingSyntheticMouseEvent)
+        flushSyntheticMouseEvents();
+}
+
+void UBBoardView::queueSyntheticMouse(QEvent::Type type, const QPointF& viewportPos,
+                                      Qt::KeyboardModifiers modifiers, bool cancel)
+{
+    if (mTouchSession.syntheticMouseSequenceId == 0)
+        return;
+
+    SyntheticMouseEvent event;
+    event.type = type;
+    event.viewportPos = viewportPos;
+    event.modifiers = modifiers;
+    event.sequenceId = mTouchSession.syntheticMouseSequenceId;
+    event.cancel = cancel;
+    mSyntheticMouseQueue.enqueue(event);
+
+    if (!mDispatchingSyntheticMouseEvent && !mSyntheticMouseDispatchTimer.isActive())
+        mSyntheticMouseDispatchTimer.start(0);
+}
+
+void UBBoardView::dispatchSyntheticMouseEvent(const SyntheticMouseEvent& event)
+{
+    // only called from flushSyntheticMouseEvents' loop, never nested
+    mDispatchingSyntheticMouseEvent = true;
+
+    const Qt::MouseButton button = event.type == QEvent::MouseMove
+        ? Qt::NoButton
+        : Qt::LeftButton;
+    const Qt::MouseButtons buttons = event.type == QEvent::MouseButtonRelease
+        ? Qt::NoButton
+        : Qt::LeftButton;
+    const QPointF globalPos = viewport()->mapToGlobal(event.viewportPos.toPoint());
+    const QPointF windowPos = viewport()->mapTo(window(), event.viewportPos.toPoint());
+    QMouseEvent mouseEvent(event.type, event.viewportPos, windowPos, globalPos,
+                           button, buttons, event.modifiers,
+                           Qt::MouseEventSynthesizedByApplication);
+
+    if (event.type == QEvent::MouseButtonPress)
+        mDeliveredSyntheticMouseSequenceId = event.sequenceId;
+    else if (event.type == QEvent::MouseButtonRelease
+             && mDeliveredSyntheticMouseSequenceId == event.sequenceId)
+        mDeliveredSyntheticMouseSequenceId = 0;
+
+    if (event.cancel)
+    {
+        const auto currentScene = scene();
+        QGraphicsItem* mouseGrabber = currentScene ? currentScene->mouseGrabberItem() : nullptr;
+
+        if (!mouseGrabber)
+        {
+            if (mMovingItemUndoDelegate)
+                mMovingItemUndoDelegate->commitUndoStep();
+        }
+
+        if (QObject* grabberObject = dynamic_cast<QObject*>(mouseGrabber))
+        {
+            const QSignalBlocker signalBlocker(grabberObject);
+            QGraphicsView::mouseReleaseEvent(&mouseEvent);
+        }
+        else
+        {
+            QGraphicsView::mouseReleaseEvent(&mouseEvent);
+        }
+
+        if (currentScene)
+            currentScene->updateSelectionFrame();
+
+        setToolCursor(UBDrawingController::drawingController()->stylusTool());
+    }
+    else
+    {
+        QApplication::sendEvent(viewport(), &mouseEvent);
+    }
+
+    // Some desktop-mode mouse handlers intentionally return after ignoring the
+    // event, before reaching their usual release-state cleanup.
+    if (event.type == QEvent::MouseButtonRelease)
+    {
+        mMouseButtonIsPressed = false;
+        mPendingStylusReleaseEvent = false;
+        mTabletStylusIsPressed = false;
+        setMovingItem(nullptr);
+        mMovingItemUndoDelegate.clear();
+        mLongPressTimer.stop();
+    }
+
+    mDispatchingSyntheticMouseEvent = false;
+}
+
+void UBBoardView::flushSyntheticMouseEvents()
+{
+    mSyntheticMouseDispatchTimer.stop();
+
+    while (!mSyntheticMouseQueue.isEmpty())
+        dispatchSyntheticMouseEvent(mSyntheticMouseQueue.dequeue());
+}
+
+bool UBBoardView::cancelSyntheticMouse()
+{
+    const quint64 sequenceId = mTouchSession.syntheticMouseSequenceId;
+    const auto currentScene = scene();
+    const bool canceledSceneWork = currentScene
+        ? currentScene->cancelStrokeForPointer(0)
+        : false;
+
+    discardQueuedSyntheticMouse(sequenceId);
+
+    if (suspendedMousePressEvent)
+    {
+        delete suspendedMousePressEvent;
+        suspendedMousePressEvent = nullptr;
+    }
+
+    if (mUBRubberBand)
+    {
+        delete mUBRubberBand;
+        mUBRubberBand = nullptr;
+    }
+
+    if (mRubberBand)
+    {
+        delete mRubberBand;
+        mRubberBand = nullptr;
+    }
+
+    mIsCreatingTextZone = false;
+    mIsCreatingSceneGrabZone = false;
+    mIsDragInProgress = false;
+    mWidgetMoved = false;
+    mJustSelectedItems.clear();
+    mLongPressTimer.stop();
+
+    if (mDeliveredSyntheticMouseSequenceId == sequenceId)
+    {
+        const QPointF outsidePos(-10000.0, -10000.0);
+        queueSyntheticMouse(QEvent::MouseButtonRelease, outsidePos,
+                            mTouchSession.deferredMouseModifiers, true);
+    }
+    else
+    {
+        mMovingItemUndoDelegate.clear();
+    }
+
+    return canceledSceneWork;
+}
+
+void UBBoardView::discardQueuedSyntheticMouse(quint64 sequenceId)
+{
+    QQueue<SyntheticMouseEvent> retainedEvents;
+
+    while (!mSyntheticMouseQueue.isEmpty())
+    {
+        SyntheticMouseEvent event = mSyntheticMouseQueue.dequeue();
+
+        if (event.sequenceId != sequenceId)
+            retainedEvents.enqueue(event);
+    }
+
+    mSyntheticMouseQueue.swap(retainedEvents);
+}
+
+QPointF UBBoardView::touchScenePos(const QPointF& viewportPos)
+{
+    const QPointF constrained = UBGeometryUtils::pointConstrainedInRect(viewportPos, viewport()->rect());
+    return viewportTransform().inverted().map(constrained);
+}
+
+bool UBBoardView::touchIsInkTool(int tool) const
+{
+    return tool == UBStylusTool::Pen
+        || tool == UBStylusTool::Marker
+        || tool == UBStylusTool::Eraser;
+}
+
+int UBBoardView::gestureWindowMs() const
+{
+    return qBound(0, UBSettings::settings()->boardGestureWindowMs->get().toInt(), 2000);
+}
+
+qreal UBBoardView::gestureMoveThresholdPx() const
+{
+    return qBound(0.0, UBSettings::settings()->boardGestureMoveThresholdPx->get().toDouble(), 500.0);
+}
+#endif
+
 void UBBoardView::tabletEvent (QTabletEvent * event)
 {
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    if (event->type() == QEvent::TabletPress)
+        finalizeTouchSession(TouchSuppressionMode::Cancel);
+#endif
+
     if (!mUseHighResTabletEvent) {
         event->setAccepted (false);
         return;
@@ -823,7 +1501,10 @@ void UBBoardView::handleItemMousePress(QMouseEvent *event)
         {
             UBGraphicsItem *graphicsItem = dynamic_cast<UBGraphicsItem*>(getMovingItem());
             if (graphicsItem)
+            {
                 graphicsItem->Delegate()->startUndoStep();
+                mMovingItemUndoDelegate = graphicsItem->Delegate();
+            }
 
             getMovingItem()->clearFocus();
         }
@@ -1103,6 +1784,16 @@ void UBBoardView::mousePressEvent (QMouseEvent *event)
         return;
     }
 
+    bool syntheticTouchMouse = false;
+
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    syntheticTouchMouse = event->source() == Qt::MouseEventSynthesizedByApplication
+        && mDeliveredSyntheticMouseSequenceId != 0;
+
+    if (!syntheticTouchMouse)
+        finalizeTouchSession();
+#endif
+
     mIsDragInProgress = false;
 
     setMultiselection(event->modifiers() & Qt::ControlModifier);
@@ -1149,9 +1840,12 @@ void UBBoardView::mousePressEvent (QMouseEvent *event)
             if (scene()->backgroundObject() == getMovingItem())
                 setMovingItem(NULL);
 
-            connect(&mLongPressTimer, SIGNAL(timeout()), this, SLOT(longPressEvent()));
-            if (!getMovingItem() && !mController->cacheIsVisible())
-                mLongPressTimer.start();
+            if (!syntheticTouchMouse)
+            {
+                connect(&mLongPressTimer, SIGNAL(timeout()), this, SLOT(longPressEvent()));
+                if (!getMovingItem() && !mController->cacheIsVisible())
+                    mLongPressTimer.start();
+            }
 
             handleItemMousePress(event);
             event->accept();
@@ -1196,7 +1890,7 @@ void UBBoardView::mousePressEvent (QMouseEvent *event)
                 viewport()->setCursor (QCursor (Qt::BlankCursor));
             }
             if (scene () && !mTabletStylusIsPressed) {
-                if (currentTool == UBStylusTool::Eraser) {
+                if (currentTool == UBStylusTool::Eraser && !syntheticTouchMouse) {
                     connect(&mLongPressTimer, SIGNAL(timeout()), this, SLOT(longPressEvent()));
                     mLongPressTimer.start();
                 }
@@ -1373,6 +2067,7 @@ void UBBoardView::mouseMoveEvent (QMouseEvent *event)
 void UBBoardView::movingItemDestroyed(QObject*)
 {
     setMovingItem(nullptr);
+    mMovingItemUndoDelegate.clear();
 }
 
 void UBBoardView::mouseReleaseEvent (QMouseEvent *event)
@@ -1644,6 +2339,7 @@ void UBBoardView::mouseReleaseEvent (QMouseEvent *event)
     mPendingStylusReleaseEvent = false;
     mTabletStylusIsPressed = false;
     setMovingItem(NULL);
+    mMovingItemUndoDelegate.clear();
 
     mLongPressTimer.stop();
     scene()->updateSelectionFrame();
@@ -1651,6 +2347,10 @@ void UBBoardView::mouseReleaseEvent (QMouseEvent *event)
 
 void UBBoardView::forcedTabletRelease ()
 {
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    finalizeTouchSession();
+#endif
+
     if (mMouseButtonIsPressed || mTabletStylusIsPressed || mPendingStylusReleaseEvent)
     {
         qWarning () << "dirty mouse/tablet state:";
@@ -1963,8 +2663,40 @@ void UBBoardView::settingChanged (QVariant newValue)
     mUseHighResTabletEvent = UBSettings::settings ()->boardUseHighResTabletEvent->get ().toBool ();
 }
 
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+void UBBoardView::multitouchSettingChanged(QVariant newValue)
+{
+    Q_UNUSED(newValue);
+
+    const bool enabled = UBSettings::settings()->boardMultitouchEnabled->get().toBool()
+        && (bIsControl || bIsDesktop);
+
+    if (!enabled)
+    {
+        finalizeTouchSession();
+        endTouchSession();
+    }
+
+    mMultitouchEnabled = enabled;
+    viewport()->setAttribute(Qt::WA_AcceptTouchEvents, enabled);
+
+    if (bIsControl)
+    {
+        if (enabled)
+            ungrabGesture(Qt::SwipeGesture);
+        else
+            grabGesture(Qt::SwipeGesture);
+    }
+}
+
+#endif
+
 void UBBoardView::virtualKeyboardActivated(bool b)
 {
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    finalizeTouchSession();
+#endif
+
     UBPlatformUtils::setWindowNonActivableFlag(this, b);
     mVirtualKeyboardActive = b;
     setInteractive(!b);
@@ -1972,6 +2704,10 @@ void UBBoardView::virtualKeyboardActivated(bool b)
 
 void UBBoardView::focusOutEvent (QFocusEvent * event)
 {
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    finalizeTouchSession();
+#endif
+
     Q_UNUSED (event);
 }
 

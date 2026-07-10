@@ -219,7 +219,9 @@ void UBBoardController::setupViews()
     mControlView->setInteractive(true);
     mControlView->setMouseTracking(true);
 
+#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
     mControlView->grabGesture(Qt::SwipeGesture);
+#endif
 
     mControlView->setTransformationAnchor(QGraphicsView::NoAnchor);
 
@@ -1522,6 +1524,9 @@ std::shared_ptr<UBGraphicsScene> UBBoardController::setActiveDocumentScene(int p
 std::shared_ptr<UBGraphicsScene> UBBoardController::setActiveDocumentScene(std::shared_ptr<UBDocumentProxy> pDocumentProxy, const int pSceneIndex, bool forceReload, bool onImport)
 {
     UBApplication::setOverrideCursor(QCursor(Qt::WaitCursor));
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    mControlView->forcedTabletRelease();
+#endif
     persistViewPositionOnCurrentScene();
 
     bool documentChange = selectedDocument() != pDocumentProxy;
