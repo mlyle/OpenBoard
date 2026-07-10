@@ -315,6 +315,10 @@ void UBSettings::init()
 
     boardUseHighResTabletEvent = new UBSetting(this, "Board", "UseHighResTabletEvent", true);
 
+    boardMultitouchEnabled = new UBSetting(this, "Board", "MultitouchEnabled", false);
+    boardGestureWindowMs = new UBSetting(this, "Board", "GestureWindowMs", 200);
+    boardGestureMoveThresholdPx = new UBSetting(this, "Board", "GestureMoveThresholdPx", 25);
+
     boardInterpolatePenStrokes = new UBSetting(this, "Board", "InterpolatePenStrokes", true);
     boardSimplifyPenStrokes = new UBSetting(this, "Board", "SimplifyPenStrokes", true);
     boardSimplifyPenStrokesThresholdAngle = new UBSetting(this, "Board", "SimplifyPenStrokesThresholdAngle", 2);

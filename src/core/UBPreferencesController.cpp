@@ -311,6 +311,11 @@ void UBPreferencesController::wire()
         settings->boardKeyboardPaletteKeyBtnSize->setString(mPreferencesUI->keyboardPaletteKeyButtonSize->itemText(index));
     });
     connect(mPreferencesUI->startModeComboBox, SIGNAL(currentIndexChanged(int)), settings->appStartMode, SLOT(setInt(int)));
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    connect(mPreferencesUI->enableMultitouchCheckBox, SIGNAL(clicked(bool)), settings->boardMultitouchEnabled, SLOT(setBool(bool)));
+#else
+    mPreferencesUI->enableMultitouchCheckBox->hide();
+#endif
 
     connect(mPreferencesUI->themeComboBox, qOverload<int>(&QComboBox::currentIndexChanged), this, [=](int index) {
         settings->appThemeMode->setInt(index);
@@ -472,6 +477,7 @@ void UBPreferencesController::init()
 
     mPreferencesUI->startModeComboBox->setCurrentIndex(settings->appStartMode->get().toInt());
     mPreferencesUI->themeComboBox->setCurrentIndex(settings->appThemeMode->get().toInt());
+    mPreferencesUI->enableMultitouchCheckBox->setChecked(settings->boardMultitouchEnabled->get().toBool());
 
     mPreferencesUI->useExternalBrowserCheckBox->setChecked(settings->webUseExternalBrowser->get().toBool());
     mPreferencesUI->displayBrowserPageCheckBox->setChecked(settings->webShowPageImmediatelyOnMirroredScreen->get().toBool());
@@ -546,6 +552,7 @@ void UBPreferencesController::defaultSettings()
         mPreferencesUI->verticalChoice->setChecked(settings->appToolBarOrientationVertical->reset().toBool());
         mPreferencesUI->horizontalChoice->setChecked(!settings->appToolBarOrientationVertical->reset().toBool());
         mPreferencesUI->startModeComboBox->setCurrentIndex(0);
+        mPreferencesUI->enableMultitouchCheckBox->setChecked(settings->boardMultitouchEnabled->reset().toBool());
 
         mPreferencesUI->useSystemOSKCheckBox->setChecked(settings->useSystemOnScreenKeyboard->reset().toBool());
 

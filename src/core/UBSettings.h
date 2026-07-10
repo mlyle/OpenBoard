@@ -300,6 +300,10 @@ class UBSettings : public QObject
 
         UBSetting* boardUseHighResTabletEvent;
 
+        UBSetting* boardMultitouchEnabled;
+        UBSetting* boardGestureWindowMs;
+        UBSetting* boardGestureMoveThresholdPx;
+
         UBSetting* boardInterpolatePenStrokes;
         UBSetting* boardSimplifyPenStrokes;
         UBSetting* boardSimplifyPenStrokesThresholdAngle;
