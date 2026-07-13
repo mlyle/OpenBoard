@@ -32,6 +32,7 @@
 #define CONTROLVIEW_OBJ_NAME "ControlView"
 
 #include <QtGui>
+#include <QElapsedTimer>
 #include <QGraphicsView>
 #include <QQueue>
 #include <QRubberBand>
@@ -221,6 +222,7 @@ private:
     {
         Idle,       // no touch sequence in progress
         Pending,    // first finger down, gesture window still open
+        GestureCandidate, // two fingers down, waiting for actual pinch motion
         Active,     // committed to drawing / synthetic mouse
         Gesture,    // two-finger pan/zoom until all fingers lift
         Suppressed  // sequence alive but ignored (pen active, tool change, ...)
@@ -237,8 +239,11 @@ private:
         TouchSessionState state = TouchSessionState::Idle;
         QHash<int, int> touchToPointer;
         QHash<int, QPointF> touchPositions;
+        QHash<int, QPointF> touchPressPositions;
+        QHash<int, QPointF> lastDeliveredPositions;
 
         int firstTouchId = -1;
+        ulong firstTouchPressTimestamp = 0;
         qreal firstTouchTravelPx = 0;
         int toolAtStart = -1;
         bool sceneWasModified = false;  // the scene's modified flag when the session started
@@ -252,6 +257,7 @@ private:
         Qt::KeyboardModifiers deferredMouseModifiers = Qt::NoModifier;
 
         int gestureTouchIds[2] = {-1, -1};
+        QPointF gestureInitialPos[2];
         QPointF gestureLastPos[2];
     };
 
@@ -269,7 +275,10 @@ private:
     void touchPointMoved(const QEventPoint& point, QTouchEvent* event);
     void touchPointReleased(const QEventPoint& point, QTouchEvent* event);
     void promotePendingSession(bool deliverDeferredMove = true);
-    void engageGesture(const QEventPoint& firstPoint, const QEventPoint& secondPoint);
+    bool addDirectTouchPointer(int touchId, const QPointF& viewportPos,
+                               Qt::KeyboardModifiers modifiers);
+    void deliverBufferedTouchMoves(Qt::KeyboardModifiers modifiers);
+    void engageGesture(int firstTouchId, int secondTouchId);
     void updateGesture();
 
     // Session teardown comes in three layers:
@@ -289,12 +298,29 @@ private:
     void discardQueuedSyntheticMouse(quint64 sequenceId);
     QPointF touchScenePos(const QPointF& viewportPos);
     bool touchIsInkTool(int tool) const;
+    bool touchDrawingEnabled() const;
+    bool touchGesturesEnabled() const;
+    bool suppressCanvasMouseForTouch(QMouseEvent* event);
+    bool canvasMouseLockedOut() const;
+    void cancelActiveCanvasMouseForTouch();
+    bool drawingRecentlyOccurred() const;
+    void recordDrawingActivity();
     int gestureWindowMs() const;
+    int gestureClassificationWindowMs() const;
+    int gestureQuietTimeMs() const;
     qreal gestureMoveThresholdPx() const;
+    qreal gestureMaxSeparationPx() const;
+    qreal drawingActivityThresholdPx() const;
+    qreal pinchActivationThresholdPx() const;
+    int mouseLockoutAfterTouchMs() const;
 
     TouchSession mTouchSession;
     QTimer mTouchPromotionTimer;
     bool mMultitouchEnabled{false};
+    int mMultitouchMode{0};
+    bool mSuppressSystemTouchMouseSequence{false};
+    QElapsedTimer mLastDrawingActivity;
+    QElapsedTimer mLastTouchInput;
     int mNextTouchPointerId{1};
     QQueue<SyntheticMouseEvent> mSyntheticMouseQueue;
     QTimer mSyntheticMouseDispatchTimer;
