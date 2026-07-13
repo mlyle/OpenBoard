@@ -48,8 +48,10 @@ class UBStylusPalette : public UBActionPalette
     private slots:
 
         void stylusToolDoubleClicked();
+        void paletteSettingsChanged(QVariant value = QVariant());
 
     private:
+        void applyToolVisibility();
         int mLastSelectedId;
 
     signals:

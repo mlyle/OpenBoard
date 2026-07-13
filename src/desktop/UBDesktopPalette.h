@@ -69,6 +69,7 @@ class UBDesktopPalette : public UBActionPalette
         void minimizeMe(eMinimizedLocation location);
         void maximizeMe();
         void parentResized();
+        void desktopPaletteSettingsChanged(QVariant value = QVariant());
 
 protected:
         void showEvent(QShowEvent *event);
@@ -83,10 +84,13 @@ private:
         QAction *mActionUniboard;
         QAction *mActionCustomSelect;
         QAction* mActionTest;
+        bool mIsMinimized{false};
 
 
         UBRightPalette* rightPalette;
         void adjustPosition();
+        QList<QAction*> maximizedActions() const;
+        void applyScale();
 
 
 signals:

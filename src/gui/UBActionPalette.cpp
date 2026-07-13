@@ -109,7 +109,8 @@ UBActionPaletteButton* UBActionPalette::createPaletteButton(QAction* action, QWi
     connect(button, &UBActionPaletteButton::clicked,
             this, &UBActionPalette::buttonClicked);
     connect(action, &QAction::changed,
-            this, &UBActionPalette::actionChanged);
+            this, &UBActionPalette::actionChanged,
+            Qt::UniqueConnection);
 
     return button;
 }

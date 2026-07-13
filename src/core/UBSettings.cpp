@@ -315,6 +315,13 @@ void UBSettings::init()
 
     boardUseHighResTabletEvent = new UBSetting(this, "Board", "UseHighResTabletEvent", true);
 
+    desktopPaletteScalePercent = new UBSetting(this, "Board", "DesktopPaletteScalePercent", 100);
+    desktopPaletteShowPen = new UBSetting(this, "Board", "DesktopPaletteShowPen", true);
+    desktopPaletteShowEraser = new UBSetting(this, "Board", "DesktopPaletteShowEraser", true);
+    desktopPaletteShowMarker = new UBSetting(this, "Board", "DesktopPaletteShowMarker", true);
+    desktopPaletteShowSelector = new UBSetting(this, "Board", "DesktopPaletteShowSelector", true);
+    desktopPaletteShowPointer = new UBSetting(this, "Board", "DesktopPaletteShowPointer", true);
+
     boardInterpolatePenStrokes = new UBSetting(this, "Board", "InterpolatePenStrokes", true);
     boardSimplifyPenStrokes = new UBSetting(this, "Board", "SimplifyPenStrokes", true);
     boardSimplifyPenStrokesThresholdAngle = new UBSetting(this, "Board", "SimplifyPenStrokesThresholdAngle", 2);

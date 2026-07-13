@@ -50,29 +50,14 @@ UBDesktopPalette::UBDesktopPalette(QWidget *parent, UBRightPalette* _rightPalett
     , mDisplaySelectAction(NULL)
     , rightPalette(_rightPalette)
 {
-    QList<QAction*> actions;
-
     mActionUniboard = new QAction(QIcon(":/images/toolbar/board.png"), tr("Show OpenBoard"), this);
     connect(mActionUniboard, SIGNAL(triggered()), this, SIGNAL(uniboardClick()));
-    actions << mActionUniboard;
-
-
-    actions << UBApplication::mainWindow->actionPen;
-    actions << UBApplication::mainWindow->actionEraser;
-    actions << UBApplication::mainWindow->actionMarker;
-    actions << UBApplication::mainWindow->actionSelector;
-    actions << UBApplication::mainWindow->actionPointer;
-
-    if (UBPlatformUtils::hasVirtualKeyboard())
-        actions << UBApplication::mainWindow->actionVirtualKeyboard;
 
     mActionCustomSelect = new QAction(QIcon(":/images/toolbar/captureArea.png"), tr("Capture Part of the Screen"), this);
     connect(mActionCustomSelect, SIGNAL(triggered()), this, SIGNAL(customClick()));
-    actions << mActionCustomSelect;
 
     mDisplaySelectAction = new QAction(QIcon(":/images/toolbar/captureScreen.png"), tr("Capture the Screen"), this);
     connect(mDisplaySelectAction, SIGNAL(triggered()), this, SIGNAL(screenClick()));
-    actions << mDisplaySelectAction;
 
     QIcon showHideIcon;
     showHideIcon.addPixmap(QPixmap(":/images/toolbar/eyeOpened.png"), QIcon::Normal , QIcon::On);
@@ -81,10 +66,9 @@ UBDesktopPalette::UBDesktopPalette(QWidget *parent, UBRightPalette* _rightPalett
     mShowHideAction->setCheckable(true);
 
     connect(mShowHideAction, SIGNAL(triggered(bool)), this, SLOT(showHideClick(bool)));
-    actions << mShowHideAction;
 
-    setActions(actions);
-    setButtonIconSize(QSize(42, 42));
+    setActions(maximizedActions());
+    applyScale();
 
     adjustSizeAndPosition();
 
@@ -98,6 +82,20 @@ UBDesktopPalette::UBDesktopPalette(QWidget *parent, UBRightPalette* _rightPalett
     setMinimizePermission(true);
 
     connect(rightPalette, SIGNAL(resized()), this, SLOT(parentResized()));
+
+    UBSettings* settings = UBSettings::settings();
+    connect(settings->desktopPaletteScalePercent, SIGNAL(changed(QVariant)),
+            this, SLOT(desktopPaletteSettingsChanged(QVariant)));
+    connect(settings->desktopPaletteShowPen, SIGNAL(changed(QVariant)),
+            this, SLOT(desktopPaletteSettingsChanged(QVariant)));
+    connect(settings->desktopPaletteShowEraser, SIGNAL(changed(QVariant)),
+            this, SLOT(desktopPaletteSettingsChanged(QVariant)));
+    connect(settings->desktopPaletteShowMarker, SIGNAL(changed(QVariant)),
+            this, SLOT(desktopPaletteSettingsChanged(QVariant)));
+    connect(settings->desktopPaletteShowSelector, SIGNAL(changed(QVariant)),
+            this, SLOT(desktopPaletteSettingsChanged(QVariant)));
+    connect(settings->desktopPaletteShowPointer, SIGNAL(changed(QVariant)),
+            this, SLOT(desktopPaletteSettingsChanged(QVariant)));
 }
 
 
@@ -165,6 +163,7 @@ void UBDesktopPalette::minimizeMe(eMinimizedLocation location)
 {
     Q_UNUSED(location);
     QList<QAction*> actions;
+    mIsMinimized = true;
     clearLayout();
 
     actions << mMaximizeAction;
@@ -180,23 +179,10 @@ void UBDesktopPalette::minimizeMe(eMinimizedLocation location)
 //  Called when the user wants to maximize the palette
 void UBDesktopPalette::maximizeMe()
 {
-    QList<QAction*> actions;
+    mIsMinimized = false;
     clearLayout();
 
-    actions << mActionUniboard;
-    actions << UBApplication::mainWindow->actionPen;
-    actions << UBApplication::mainWindow->actionEraser;
-    actions << UBApplication::mainWindow->actionMarker;
-    actions << UBApplication::mainWindow->actionSelector;
-    actions << UBApplication::mainWindow->actionPointer;
-    if (UBPlatformUtils::hasVirtualKeyboard())
-        actions << UBApplication::mainWindow->actionVirtualKeyboard;
-
-    actions << mActionCustomSelect;
-    actions << mDisplaySelectAction;
-    actions << mShowHideAction;
-
-    setActions(actions);
+    setActions(maximizedActions());
 
     adjustSizeAndPosition();
 
@@ -204,6 +190,59 @@ void UBDesktopPalette::maximizeMe()
     emit maximized();
 #ifdef UB_REQUIRES_MASK_UPDATE
         emit refreshMask();
+#endif
+}
+
+QList<QAction*> UBDesktopPalette::maximizedActions() const
+{
+    UBSettings* settings = UBSettings::settings();
+    QList<QAction*> actions;
+
+    actions << mActionUniboard;
+    if (settings->desktopPaletteShowPen->get().toBool())
+        actions << UBApplication::mainWindow->actionPen;
+    if (settings->desktopPaletteShowEraser->get().toBool())
+        actions << UBApplication::mainWindow->actionEraser;
+    if (settings->desktopPaletteShowMarker->get().toBool())
+        actions << UBApplication::mainWindow->actionMarker;
+    if (settings->desktopPaletteShowSelector->get().toBool())
+        actions << UBApplication::mainWindow->actionSelector;
+    if (settings->desktopPaletteShowPointer->get().toBool())
+        actions << UBApplication::mainWindow->actionPointer;
+
+    if (UBPlatformUtils::hasVirtualKeyboard())
+        actions << UBApplication::mainWindow->actionVirtualKeyboard;
+
+    actions << mActionCustomSelect;
+    actions << mDisplaySelectAction;
+    actions << mShowHideAction;
+    return actions;
+}
+
+void UBDesktopPalette::applyScale()
+{
+    const int percent = qBound(100,
+        UBSettings::settings()->desktopPaletteScalePercent->get().toInt(), 200);
+    const int iconExtent = qRound(42.0 * percent / 100.0);
+    setButtonIconSize(QSize(iconExtent, iconExtent));
+}
+
+void UBDesktopPalette::desktopPaletteSettingsChanged(QVariant value)
+{
+    Q_UNUSED(value);
+    applyScale();
+
+    if (!mIsMinimized)
+    {
+        clearLayout();
+        setActions(maximizedActions());
+        emit maximized();
+    }
+
+    adjustSizeAndPosition();
+
+#ifdef UB_REQUIRES_MASK_UPDATE
+    emit refreshMask();
 #endif
 }
 
