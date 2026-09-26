@@ -287,12 +287,20 @@ private:
     //  - finalizeTouchSession() also flushes the synthetic mouse queue, so all
     //    effects of the session are applied when it returns;
     //  - endTouchSession() resets the bookkeeping once no fingers remain.
+    //
+    // abandonTouchSession() is the bail-out for when the platform has taken the
+    // touch stream away from us (hide, deactivate, focus loss, teardown): the
+    // matching TouchEnd will never arrive, so the session must be torn all the
+    // way down rather than parked in Suppressed, which would leave
+    // canvasMouseLockedOut() true forever and swallow every later mouse event.
+    void abandonTouchSession(TouchSuppressionMode mode = TouchSuppressionMode::Commit);
     void endTouchSession();
     void suppressTouchSession(TouchSuppressionMode mode);
     void finalizeTouchSession(TouchSuppressionMode mode = TouchSuppressionMode::Commit);
     void queueSyntheticMouse(QEvent::Type type, const QPointF& viewportPos,
                              Qt::KeyboardModifiers modifiers, bool cancel = false);
     void dispatchSyntheticMouseEvent(const SyntheticMouseEvent& event);
+    void releaseMouseGrabberSilently(QGraphicsItem* mouseGrabber, QMouseEvent& releaseEvent);
     void flushSyntheticMouseEvents();
     bool cancelSyntheticMouse();
     void discardQueuedSyntheticMouse(quint64 sequenceId);
@@ -316,6 +324,10 @@ private:
 
     TouchSession mTouchSession;
     QTimer mTouchPromotionTimer;
+    // Catch-all for a touch sequence that stops being delivered without a
+    // TouchEnd; restarted on every touch event, so it only fires after a live
+    // session has gone completely silent.
+    QTimer mTouchWatchdogTimer;
     bool mMultitouchEnabled{false};
     int mMultitouchMode{0};
     bool mSuppressSystemTouchMouseSequence{false};

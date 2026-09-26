@@ -89,6 +89,16 @@
 
 #include "core/memcheck.h"
 
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+namespace
+{
+    // How long a live touch session may go without any touch event at all
+    // before it is presumed lost. Held-still fingers are normal, so this is far
+    // above any human pause inside a stroke.
+    constexpr int sTouchWatchdogMs = 5000;
+}
+#endif
+
 UBBoardView::UBBoardView (UBBoardController* pController, QWidget* pParent, bool isControl, bool isDesktop)
     : QGraphicsView (pParent)
     , mController (pController)
@@ -142,7 +152,12 @@ UBBoardView::UBBoardView (UBBoardController* pController, int pStartLayer, int p
 UBBoardView::~UBBoardView ()
 {
 #if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
-    finalizeTouchSession();
+    // Commit outstanding scene work, but never dispatch the synthetic mouse
+    // queue: the view is being torn down and must not re-enter its own handlers.
+    suppressTouchSession(TouchSuppressionMode::Commit);
+    mSyntheticMouseQueue.clear();
+    mSyntheticMouseDispatchTimer.stop();
+    endTouchSession();
 #endif
 
     if (suspendedMousePressEvent){
@@ -179,6 +194,22 @@ void UBBoardView::init ()
     mSyntheticMouseDispatchTimer.setSingleShot(true);
     connect(&mSyntheticMouseDispatchTimer, &QTimer::timeout,
             this, &UBBoardView::flushSyntheticMouseEvents);
+
+    // Last line of defence against a dropped TouchEnd wedging the view. The
+    // interval is deliberately long: it must never cut a live stroke short just
+    // because a finger was held still, only reclaim a session nothing will
+    // finish.
+    mTouchWatchdogTimer.setSingleShot(true);
+    connect(&mTouchWatchdogTimer, &QTimer::timeout, this, [this]() {
+        if (mTouchSession.state == TouchSessionState::Idle)
+            return;
+
+        qWarning() << "Touch session went silent without a TouchEnd; abandoning it. state:"
+                   << static_cast<int>(mTouchSession.state)
+                   << "contacts:" << mTouchSession.touchPositions.size();
+
+        abandonTouchSession(TouchSuppressionMode::Commit);
+    });
 
     // Note: a scene switch finalizes the touch session through forcedTabletRelease(),
     // which UBBoardController::setActiveDocumentScene calls before swapping the scene;
@@ -338,8 +369,10 @@ void UBBoardView::keyPressEvent (QKeyEvent *event)
 bool UBBoardView::event (QEvent * e)
 {
 #if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+    // The platform keeps the rest of the touch stream once we are hidden or
+    // deactivated, so the session has to be abandoned outright.
     if (e->type() == QEvent::WindowDeactivate || e->type() == QEvent::Hide)
-        finalizeTouchSession();
+        abandonTouchSession();
 #endif
 
     if (e->type () == QEvent::Gesture)
@@ -407,6 +440,7 @@ bool UBBoardView::handleTouchEvent(QTouchEvent* event)
 {
     // Native touch owns the canvas until the configured quiet period elapses.
     mLastTouchInput.start();
+    mTouchWatchdogTimer.start(sTouchWatchdogMs);
 
     if (event->type() == QEvent::TouchCancel)
     {
@@ -976,9 +1010,26 @@ void UBBoardView::updateGesture()
     mTouchSession.gestureLastPos[1] = secondPos;
 }
 
+void UBBoardView::abandonTouchSession(TouchSuppressionMode mode)
+{
+    if (mTouchSession.state == TouchSessionState::Idle)
+    {
+        mTouchWatchdogTimer.stop();
+        return;
+    }
+
+    // finalizeTouchSession() alone parks the session in Suppressed whenever
+    // contacts are still tracked, and only a TouchEnd / TouchCancel that is
+    // never coming would clear it. endTouchSession() drops the stale contacts
+    // so canvasMouseLockedOut() goes false again.
+    finalizeTouchSession(mode);
+    endTouchSession();
+}
+
 void UBBoardView::endTouchSession()
 {
     mTouchPromotionTimer.stop();
+    mTouchWatchdogTimer.stop();
     Q_ASSERT(mTouchSession.touchToPointer.isEmpty());
     Q_ASSERT(!mTouchSession.syntheticMousePressed);
     mTouchSession = TouchSession();
@@ -1073,6 +1124,24 @@ void UBBoardView::queueSyntheticMouse(QEvent::Type type, const QPointF& viewport
         mSyntheticMouseDispatchTimer.start(0);
 }
 
+void UBBoardView::releaseMouseGrabberSilently(QGraphicsItem* mouseGrabber,
+                                              QMouseEvent& releaseEvent)
+{
+    // The grabber can delete itself while handling the release (delete button,
+    // an undo step that removes the item, ...). QSignalBlocker holds a raw
+    // pointer and would unblock through a dangling one, so track it weakly.
+    QPointer<QObject> grabberObject = dynamic_cast<QObject*>(mouseGrabber);
+    const bool wasBlocked = grabberObject && grabberObject->signalsBlocked();
+
+    if (grabberObject)
+        grabberObject->blockSignals(true);
+
+    QGraphicsView::mouseReleaseEvent(&releaseEvent);
+
+    if (grabberObject)
+        grabberObject->blockSignals(wasBlocked);
+}
+
 void UBBoardView::dispatchSyntheticMouseEvent(const SyntheticMouseEvent& event)
 {
     // only called from flushSyntheticMouseEvents' loop, never nested
@@ -1107,15 +1176,7 @@ void UBBoardView::dispatchSyntheticMouseEvent(const SyntheticMouseEvent& event)
                 mMovingItemUndoDelegate->commitUndoStep();
         }
 
-        if (QObject* grabberObject = dynamic_cast<QObject*>(mouseGrabber))
-        {
-            const QSignalBlocker signalBlocker(grabberObject);
-            QGraphicsView::mouseReleaseEvent(&mouseEvent);
-        }
-        else
-        {
-            QGraphicsView::mouseReleaseEvent(&mouseEvent);
-        }
+        releaseMouseGrabberSilently(mouseGrabber, mouseEvent);
 
         if (currentScene)
             currentScene->updateSelectionFrame();
@@ -1291,15 +1352,7 @@ void UBBoardView::cancelActiveCanvasMouseForTouch()
     const auto currentScene = scene();
     QGraphicsItem* mouseGrabber = currentScene ? currentScene->mouseGrabberItem() : nullptr;
 
-    if (QObject* grabberObject = dynamic_cast<QObject*>(mouseGrabber))
-    {
-        const QSignalBlocker signalBlocker(grabberObject);
-        QGraphicsView::mouseReleaseEvent(&releaseEvent);
-    }
-    else
-    {
-        QGraphicsView::mouseReleaseEvent(&releaseEvent);
-    }
+    releaseMouseGrabberSilently(mouseGrabber, releaseEvent);
 
     if (suspendedMousePressEvent)
     {
@@ -3118,7 +3171,7 @@ void UBBoardView::multitouchSettingChanged(QVariant newValue)
 void UBBoardView::virtualKeyboardActivated(bool b)
 {
 #if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
-    finalizeTouchSession();
+    abandonTouchSession();
 #endif
 
     UBPlatformUtils::setWindowNonActivableFlag(this, b);
@@ -3129,7 +3182,7 @@ void UBBoardView::virtualKeyboardActivated(bool b)
 void UBBoardView::focusOutEvent (QFocusEvent * event)
 {
 #if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
-    finalizeTouchSession();
+    abandonTouchSession();
 #endif
 
     Q_UNUSED (event);
