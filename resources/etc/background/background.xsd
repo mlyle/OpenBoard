@@ -45,7 +45,24 @@
                 </xs:complexType>
             </xs:element>
             <xs:element name="defaultColor" type="bg:Color" minOccurs="0"/>
+            <xs:element name="dots" type="bg:Dots" minOccurs="0"/>
             <xs:element name="linegroup" type="bg:Linegroup" minOccurs="0" maxOccurs="unbounded"/>
+        </xs:sequence>
+    </xs:complexType>
+
+    <!--
+        The presence of Dots turns the ruling into a dot grid: rather than drawing
+        its line groups, a dot is drawn at every intersection between them. The
+        line groups therefore still define the lattice, and snapping is unchanged.
+        At least two line groups are needed, since a single group has no
+        intersections. Dots contains:
+        - an optional radius in millimeters. Default is 0.6.
+        - an optional color specification overriding the default color.
+    -->
+    <xs:complexType name="Dots">
+        <xs:sequence>
+            <xs:element name="radius" type="xs:decimal" minOccurs="0"/>
+            <xs:element name="color" type="bg:Color" minOccurs="0"/>
         </xs:sequence>
     </xs:complexType>
 

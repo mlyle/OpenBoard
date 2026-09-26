@@ -31,6 +31,7 @@
 #include <QPainter>
 #include <QPointF>
 #include <QRectF>
+#include <QSet>
 
 // namespace and element names
 static constexpr char const* namespaceURI{"http://openboard.org/template/background/"};
@@ -47,6 +48,7 @@ static constexpr char const* elementBackground{"background"};
 static constexpr char const* elementColor{"color"};
 static constexpr char const* elementDefaultColor{"defaultColor"};
 static constexpr char const* elementDescription{"description"};
+static constexpr char const* elementDots{"dots"};
 static constexpr char const* elementFrom{"from"};
 static constexpr char const* elementLinegroup{"linegroup"};
 static constexpr char const* elementLine{"line"};
@@ -54,6 +56,7 @@ static constexpr char const* elementOffset{"offset"};
 static constexpr char const* elementOnDark{"onDark"};
 static constexpr char const* elementOnLight{"onLight"};
 static constexpr char const* elementOrigin{"origin"};
+static constexpr char const* elementRadius{"radius"};
 static constexpr char const* elementSpacing{"spacing"};
 static constexpr char const* elementStack{"stack"};
 static constexpr char const* elementStretch{"stretch"};
@@ -309,6 +312,11 @@ bool UBBackgroundRuling::hasIntermediateLines() const
     return mRules->hasIntermediateLines();
 }
 
+bool UBBackgroundRuling::isDotted() const
+{
+    return mRules && mRules->hasDots();
+}
+
 bool UBBackgroundRuling::isUserProvided() const
 {
     return mUserProvided;
@@ -339,7 +347,109 @@ void UBBackgroundRuling::draw(QPainter* painter, const QRectF& rect, double grid
         drawBorderLines(painter, borderLines, line, edge, dotsPerMm, onDark, defaultOnDark, defaultOnLight);
     };
 
+    if (mRules->hasDots())
+    {
+        drawDots(painter, rect, gridSize, nominalScene, onDark, defaultOnDark, defaultOnLight);
+        return;
+    }
+
     determineGridLines(rect, gridSize, nominalScene, paintGridLine, paintBorderLine);
+}
+
+double UBBackgroundRuling::effectiveGridSize(const QRectF& rect, double gridSize) const
+{
+    if (gridSize != 0 || !mRules)
+    {
+        return gridSize;
+    }
+
+    // guess reasonable grid size for buttons
+    // at least two spacings on rect, else 12.
+    double spacing{0};
+
+    if (!mRules->linegroups().empty())
+    {
+        spacing = mRules->linegroups().at(0).spacing();
+    }
+
+    if (spacing > 0)
+    {
+        // factor 10: spacing is in mm
+        // factor 2.5: at least 2.5 repetitions in button
+        // limit 12: reasonable limit for small spacings, about 1/3 of grid size on screen
+        return std::min(rect.height() / (2.5 * spacing / 10.), 12.);
+    }
+
+    return gridSize;
+}
+
+QList<QPointF> UBBackgroundRuling::gridIntersections(const QRectF& rect, double gridSize,
+                                                     const QRectF& nominalScene) const
+{
+    QList<QLineF> lines;
+    determineGridLines(rect, gridSize, nominalScene, [&lines](const Line&, QLineF gridLine){
+        lines << gridLine;
+    });
+
+    // All three line families of an isometric grid meet at each vertex, so the
+    // same point is found repeatedly; quantize to half pixels to drop duplicates.
+    QList<QPointF> intersections;
+    QSet<qint64> seen;
+
+    for (int i = 0; i < lines.size() - 1; ++i)
+    {
+        for (int j = i + 1; j < lines.size(); ++j)
+        {
+            QPointF intersection;
+
+            if (lines.at(i).intersects(lines.at(j), &intersection) == QLineF::BoundedIntersection)
+            {
+                const qint64 kx = qRound(intersection.x() * 2);
+                const qint64 ky = qRound(intersection.y() * 2);
+                const qint64 key = (kx << 32) | (ky & 0xFFFFFFFFLL);
+
+                if (!seen.contains(key))
+                {
+                    seen.insert(key);
+                    intersections << intersection;
+                }
+            }
+        }
+    }
+
+    return intersections;
+}
+
+void UBBackgroundRuling::drawDots(QPainter* painter, const QRectF& rect, double gridSize,
+                                  const QRectF& nominalScene, bool onDark, QColor defaultOnDark,
+                                  QColor defaultOnLight) const
+{
+    const auto dotsPerMm = effectiveGridSize(rect, gridSize) / 10;
+    const auto& dotColor = mRules->dotColor();
+    const auto colorOnDark = dotColor.onDark();
+    const auto colorOnLight = dotColor.onLight();
+
+    // An alpha-only specification tints the configured grid colour, as for lines.
+    defaultOnDark.setAlphaF(colorOnDark.alphaF());
+    defaultOnLight.setAlphaF(colorOnLight.alphaF());
+
+    const QColor color = onDark ? (colorOnDark.isValid() ? colorOnDark : defaultOnDark)
+                                : (colorOnLight.isValid() ? colorOnLight : defaultOnLight);
+
+    // Keep the dots visible in the palette previews, where the grid is drawn at a
+    // fraction of its on-screen size.
+    const auto radius = std::max(mRules->dotRadius() * dotsPerMm, 0.75);
+
+    painter->save();
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(color);
+
+    for (const auto& point : gridIntersections(rect, gridSize, nominalScene))
+    {
+        painter->drawEllipse(point, radius, radius);
+    }
+
+    painter->restore();
 }
 
 QPointF UBBackgroundRuling::snap(const QPointF& point, double gridSize, const QRectF& nominalScene, double* force, std::optional<QPointF> proposedPoint,
@@ -463,25 +573,7 @@ void UBBackgroundRuling::determineGridLines(const QRectF& rect, double gridSize,
         return;
     }
 
-    if (gridSize == 0)
-    {
-        // guess reasonable grid size for buttons
-        // at least two spacings on rect, else 12.
-        double spacing{0};
-
-        if (!mRules->linegroups().empty())
-        {
-            spacing = mRules->linegroups().at(0).spacing();
-        }
-
-        if (spacing > 0)
-        {
-            // factor 10: spacing is in mm
-            // factor 2.5: at least 2.5 repetitions in button
-            // limit 12: reasonable limit for small spacings, about 1/3 of grid size on screen
-            gridSize = std::min(rect.height() / (2.5 * spacing / 10.), 12.);
-        }
-    }
+    gridSize = effectiveGridSize(rect, gridSize);
 
     const auto dotsPerMm = gridSize / 10;
 
@@ -1093,6 +1185,7 @@ std::optional<UBBackgroundRuling::Limit> UBBackgroundRuling::Linegroup::stack() 
 UBBackgroundRuling::Rules::Rules(QXmlStreamReader& reader)
     : Data{*this}
     , mDefaultColor{*this, {}, {}}
+    , mDotColor{*this, {}, {}}
 {
     // current position of reader should be at the <background> element
     while (!reader.isEndElement())
@@ -1125,6 +1218,25 @@ UBBackgroundRuling::Rules::Rules(QXmlStreamReader& reader)
             else if (name.toString() == elementDefaultColor)
             {
                 mDefaultColor = LineColor{*this, reader};
+            }
+            else if (name.toString() == elementDots)
+            {
+                mDots = true;
+
+                while (reader.readNextStartElement() && reader.namespaceUri().toString() == namespaceURI)
+                {
+                    if (getDecimalValue(reader, elementRadius, mDotRadius))
+                    {
+                    }
+                    else if (reader.name().toString() == elementColor)
+                    {
+                        mDotColor = LineColor{*this, reader};
+                    }
+                    else
+                    {
+                        setError();
+                    }
+                }
             }
             else if (name.toString() == elementLinegroup)
             {
@@ -1199,6 +1311,21 @@ void UBBackgroundRuling::Rules::toXml(QXmlStreamWriter& writer) const
         writer.writeEndElement();
     }
 
+    if (mDots)
+    {
+        writer.writeStartElement(namespaceURI, elementDots);
+        writer.writeTextElement(namespaceURI, elementRadius, QString::number(mDotRadius));
+
+        if (mDotColor.onDark().isValid() || mDotColor.onLight().isValid())
+        {
+            writer.writeStartElement(namespaceURI, elementColor);
+            mDotColor.toXml(writer);
+            writer.writeEndElement();
+        }
+
+        writer.writeEndElement();
+    }
+
     for (const auto& linegroup : mLinegroups)
     {
         writer.writeStartElement(namespaceURI, elementLinegroup);
@@ -1232,6 +1359,21 @@ bool UBBackgroundRuling::Rules::isRuled() const
 bool UBBackgroundRuling::Rules::hasIntermediateLines() const
 {
     return mIntermediateLines;
+}
+
+bool UBBackgroundRuling::Rules::hasDots() const
+{
+    return mDots;
+}
+
+double UBBackgroundRuling::Rules::dotRadius() const
+{
+    return mDotRadius;
+}
+
+const UBBackgroundRuling::LineColor& UBBackgroundRuling::Rules::dotColor() const
+{
+    return mDotColor;
 }
 
 UBBackgroundRuling::LineColor UBBackgroundRuling::Rules::defaultColor() const

@@ -1,0 +1,29 @@
+<bg:background xmlns:bg="http://openboard.org/template/background/">
+    <bg:uuid>bdc60283-1b0f-45b6-9ade-e5bf70d98398</bg:uuid>
+    <bg:description xml:lang="en">Dots</bg:description>
+    <bg:description xml:lang="de">Punkteraster</bg:description>
+    <bg:attributes crossed="true"/>
+    <bg:dots>
+        <bg:radius>0.5</bg:radius>
+        <bg:color>
+            <bg:onDark>#FF909090</bg:onDark>
+            <bg:onLight>#FF909090</bg:onLight>
+        </bg:color>
+    </bg:dots>
+    <bg:linegroup>
+        <bg:angle>0</bg:angle>
+        <bg:spacing>10</bg:spacing>
+        <bg:line>
+            <bg:offset>0</bg:offset>
+            <bg:width>1</bg:width>
+        </bg:line>
+    </bg:linegroup>
+    <bg:linegroup>
+        <bg:angle>90</bg:angle>
+        <bg:spacing>10</bg:spacing>
+        <bg:line>
+            <bg:offset>0</bg:offset>
+            <bg:width>1</bg:width>
+        </bg:line>
+    </bg:linegroup>
+</bg:background>

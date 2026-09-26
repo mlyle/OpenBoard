@@ -54,6 +54,9 @@ public:
     bool isRuled() const;
     bool hasIntermediateLines() const;
     bool isUserProvided() const;
+    // A dotted ruling marks its grid with a dot at every line intersection
+    // instead of drawing the lines themselves.
+    bool isDotted() const;
 
     void draw(QPainter* painter, const QRectF& rect, double gridSize, const QRectF& nominalScene, bool onDark) const;
     QPointF snap(const QPointF& point, double gridSize, const QRectF& nominalScene, double* force = nullptr,
@@ -61,6 +64,14 @@ public:
 
 private:
     class Line;  // forward
+    // Resolves the grid size actually used for a paint, substituting a size that
+    // suits a small button preview when the caller passes 0.
+    double effectiveGridSize(const QRectF& rect, double gridSize) const;
+    // Distinct intersections of the ruling's line groups within rect, which are
+    // the lattice points a dotted ruling marks and snap() already aims at.
+    QList<QPointF> gridIntersections(const QRectF& rect, double gridSize, const QRectF& nominalScene) const;
+    void drawDots(QPainter* painter, const QRectF& rect, double gridSize, const QRectF& nominalScene, bool onDark,
+                  QColor defaultOnDark, QColor defaultOnLight) const;
     void determineGridLines(const QRectF& rect, double gridSize, const QRectF& nominalScene,
                         std::function<void(const Line& line, QLineF gridLine)> handleGridLine = nullptr,
                         std::function<void(const QList<Line>&, QLineF, Qt::Edge)> handleBorder = nullptr) const;
@@ -186,6 +197,9 @@ private:
         bool isCrossed() const;
         bool isRuled() const;
         bool hasIntermediateLines() const;
+        bool hasDots() const;
+        double dotRadius() const;
+        const LineColor& dotColor() const;
         LineColor defaultColor() const;
         const QList<Linegroup>& linegroups() const;
 
@@ -195,7 +209,10 @@ private:
         bool mCrossed{false};
         bool mRuled{false};
         bool mIntermediateLines{false};
+        bool mDots{false};
+        double mDotRadius{0.6};
         LineColor mDefaultColor;
+        LineColor mDotColor;
         QList<Linegroup> mLinegroups{};
     };
 

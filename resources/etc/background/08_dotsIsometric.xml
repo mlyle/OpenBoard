@@ -1,0 +1,37 @@
+<bg:background xmlns:bg="http://openboard.org/template/background/">
+    <bg:uuid>4c484b58-9540-403d-b9a7-da62bfe1ecd0</bg:uuid>
+    <bg:description xml:lang="en">Isometric dots</bg:description>
+    <bg:description xml:lang="de">Isometrisches Punkteraster</bg:description>
+    <bg:attributes crossed="true"/>
+    <bg:dots>
+        <bg:radius>0.5</bg:radius>
+        <bg:color>
+            <bg:onDark>#FF909090</bg:onDark>
+            <bg:onLight>#FF909090</bg:onLight>
+        </bg:color>
+    </bg:dots>
+    <bg:linegroup>
+        <bg:angle>30</bg:angle>
+        <bg:spacing>8.66025403784</bg:spacing>
+        <bg:line>
+            <bg:offset>0</bg:offset>
+            <bg:width>1</bg:width>
+        </bg:line>
+    </bg:linegroup>
+    <bg:linegroup>
+        <bg:angle>90</bg:angle>
+        <bg:spacing>8.66025403784</bg:spacing>
+        <bg:line>
+            <bg:offset>0</bg:offset>
+            <bg:width>1</bg:width>
+        </bg:line>
+    </bg:linegroup>
+    <bg:linegroup>
+        <bg:angle>150</bg:angle>
+        <bg:spacing>8.66025403784</bg:spacing>
+        <bg:line>
+            <bg:offset>0</bg:offset>
+            <bg:width>1</bg:width>
+        </bg:line>
+    </bg:linegroup>
+</bg:background>
