@@ -72,7 +72,10 @@ struct UBStylusTool
         Pointer,
         Line,
         Text,
-        Capture
+        Capture,
+        // Appended so the values of the tools above stay put.
+        Rectangle,
+        FloodFill
     };
 };
 

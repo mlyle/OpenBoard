@@ -189,6 +189,11 @@ class UBGraphicsScene: public UBCoreGraphicsScene, public UBItem, public std::en
         void moveTo(const QPointF& pPoint);
         void drawLineTo(const QPointF& pEndPoint, const qreal& pWidth, bool bLineStyle);
         void drawLineTo(const QPointF& pEndPoint, const qreal& pStartWidth, const qreal& endWidth, bool bLineStyle);
+        void drawRectTo(const QPointF& corner, const qreal& width);
+        // Fills the area enclosing scenePos with the current drawing colour.
+        // Returns false when the point is on ink, or the area could not be
+        // bounded.
+        bool floodFillAt(const QPointF& scenePos);
         void eraseLineTo(const QPointF& pEndPoint, const qreal& pWidth);
         void drawArcTo(const QPointF& pCenterPoint, qreal pSpanAngle);
         void drawCurve(const QList<QPair<QPointF, qreal> > &points);
@@ -423,6 +428,10 @@ signals:
 
         QGraphicsEllipseItem* mEraser;
         QGraphicsEllipseItem* mPointer; // "laser" pointer
+
+        // Set while rasterizing the scene for a flood fill, so that the ruling
+        // is not mistaken for ink that bounds the fill.
+        bool mSuppressBackgroundPaint{false};
         QGraphicsEllipseItem* mMarkerCircle; // dotted circle around marker
         QGraphicsEllipseItem* mPenCircle; // dotted circle around pen
 

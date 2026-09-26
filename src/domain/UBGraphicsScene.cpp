@@ -433,12 +433,12 @@ bool UBGraphicsScene::inputDevicePress(const QPointF& scenePos, const qreal& pre
             // ---------------------------------------------------------------
             mCurrentStroke = new UBGraphicsStroke(shared_from_this());
 
-            if (currentTool != UBStylusTool::Line){
+            if (currentTool != UBStylusTool::Line && currentTool != UBStylusTool::Rectangle){
                 // Handle the pressure
                 width = UBDrawingController::drawingController()->currentToolWidth() * pressure;
             }
             else{
-                // Ignore pressure for the line tool
+                // Ignore pressure for the line and rectangle tools
                 width = UBDrawingController::drawingController()->currentToolWidth();
             }
 
@@ -451,16 +451,19 @@ bool UBGraphicsScene::inputDevicePress(const QPointF& scenePos, const qreal& pre
             if (UBDrawingController::drawingController()->activeRuler())
                 UBDrawingController::drawingController()->activeRuler()->StartLine(scenePos, width);
             else {
-                bool isLine = UBDrawingController::drawingController()->stylusTool() == UBStylusTool::Line;
+                const int tool = UBDrawingController::drawingController()->stylusTool();
+                // The rectangle tool pins a corner where the line tool pins its
+                // start point, and likewise redraws its preview on every move.
+                const bool anchored = tool == UBStylusTool::Line || tool == UBStylusTool::Rectangle;
                 QPointF pos = scenePos;
 
-                if (isLine && isSnapping())
+                if (anchored && isSnapping())
                 {
                     pos += snap(scenePos);
                 }
 
                 moveTo(pos);
-                drawLineTo(pos, width, isLine);
+                drawLineTo(pos, width, anchored);
 
                 mCurrentStroke->addPoint(pos, width);
             }
@@ -483,6 +486,9 @@ bool UBGraphicsScene::inputDevicePress(const QPointF& scenePos, const qreal& pre
         else if (currentTool == UBStylusTool::Pointer) {
             drawPointer(scenePos, true);
             accepted = true;
+        }
+        else if (currentTool == UBStylusTool::FloodFill) {
+            accepted = floodFillAt(scenePos);
         }
     }
 
@@ -534,11 +540,11 @@ bool UBGraphicsScene::inputDeviceMove(const QPointF& scenePos, const qreal& pres
         {
             qreal width = 0;
 
-            if (currentTool != UBStylusTool::Line){
+            if (currentTool != UBStylusTool::Line && currentTool != UBStylusTool::Rectangle){
                 // Handle the pressure
                 width = dc->currentToolWidth() * qMax(pressure, 0.2);
             }else{
-                // Ignore pressure for line tool
+                // Ignore pressure for the line and rectangle tools
                 width = dc->currentToolWidth();
             }
 
@@ -614,6 +620,17 @@ bool UBGraphicsScene::inputDeviceMove(const QPointF& scenePos, const qreal& pres
                 UBApplication::boardController->setCursorFromAngle(angle, offset);
 
                 drawLineTo(position, width, true);
+            }
+
+            else if (currentTool == UBStylusTool::Rectangle) {
+                // Only grid snapping applies; the angle grip the line tool uses
+                // has no meaning for an axis-aligned rectangle.
+                if (isSnapping())
+                {
+                    position += snap(position);
+                }
+
+                drawRectTo(position, width);
             }
 
             else {
@@ -980,6 +997,295 @@ void UBGraphicsScene::drawLineTo(const QPointF &pEndPoint, const qreal &startWid
         mPreviousPoint = pEndPoint;
         mPreviousWidth = endWidth;
     }
+}
+
+void UBGraphicsScene::drawRectTo(const QPointF& corner, const qreal& width)
+{
+    // Rebuild the preview from scratch, as drawLineTo does in line style.
+    QSetIterator<QGraphicsItem*> itItems(mAddedItems);
+
+    while (itItems.hasNext())
+    {
+        QGraphicsItem* item = itItems.next();
+        removeItem(item);
+    }
+
+    mAddedItems.clear();
+
+    const QRectF rect = QRectF(mPreviousPoint, corner).normalized();
+
+    // Overlap the edges by half a stroke width so the corners close up; the
+    // segment quads are flat-capped and would otherwise leave notches.
+    const qreal overhang = width / 2;
+
+    const QList<QLineF> edges{
+        QLineF(rect.topLeft() - QPointF(overhang, 0), rect.topRight() + QPointF(overhang, 0)),
+        QLineF(rect.bottomLeft() - QPointF(overhang, 0), rect.bottomRight() + QPointF(overhang, 0)),
+        QLineF(rect.topLeft() - QPointF(0, overhang), rect.bottomLeft() + QPointF(0, overhang)),
+        QLineF(rect.topRight() - QPointF(0, overhang), rect.bottomRight() + QPointF(0, overhang))
+    };
+
+    for (const auto& edge : edges)
+    {
+        addPolygonItemToCurrentStroke(lineToPolygonItem(edge, width, width));
+    }
+}
+
+namespace
+{
+    // Ink is anything the scene painted with more than a faint alpha; the
+    // threshold sits low enough to catch antialiased stroke edges.
+    constexpr int sInkAlphaThreshold = 64;
+    // Ink is thickened by this much before flooding, so hairline gaps where two
+    // strokes nearly meet do not let the fill escape.
+    constexpr int sGapClosePx = 3;
+    // The filled region is then grown by this much and placed under the ink, so
+    // no antialiased halo is left between the fill and the strokes bounding it.
+    constexpr int sFillExpandPx = 3;
+    constexpr int sMaxFillPixels = 4000000;
+
+    // Grows a mask by radius, using two passes of a separable square dilation.
+    void dilateMask(QVector<uchar>& mask, int width, int height, int radius)
+    {
+        if (radius <= 0)
+        {
+            return;
+        }
+
+        QVector<uchar> pass(mask.size(), 0);
+
+        for (int y = 0; y < height; ++y)
+        {
+            const int row = y * width;
+
+            for (int x = 0; x < width; ++x)
+            {
+                if (!mask.at(row + x))
+                {
+                    continue;
+                }
+
+                const int from = std::max(0, x - radius);
+                const int to = std::min(width - 1, x + radius);
+
+                for (int i = from; i <= to; ++i)
+                {
+                    pass[row + i] = 1;
+                }
+            }
+        }
+
+        mask.fill(0);
+
+        for (int y = 0; y < height; ++y)
+        {
+            const int row = y * width;
+
+            for (int x = 0; x < width; ++x)
+            {
+                if (!pass.at(row + x))
+                {
+                    continue;
+                }
+
+                const int from = std::max(0, y - radius);
+                const int to = std::min(height - 1, y + radius);
+
+                for (int i = from; i <= to; ++i)
+                {
+                    mask[i * width + x] = 1;
+                }
+            }
+        }
+    }
+}
+
+bool UBGraphicsScene::floodFillAt(const QPointF& scenePos)
+{
+    const QRectF area = normalizedSceneRect().united(annotationsBoundingRect());
+
+    if (!area.contains(scenePos) || area.isEmpty())
+    {
+        return false;
+    }
+
+    // Rasterize at roughly scene resolution, capped so a large page cannot turn
+    // a fill into a multi-second operation.
+    const double fullPixels = area.width() * area.height();
+    const double scale = std::min(1., std::sqrt(sMaxFillPixels / std::max(fullPixels, 1.)));
+    const int width = std::max(1, qRound(area.width() * scale));
+    const int height = std::max(1, qRound(area.height() * scale));
+
+    QImage render{width, height, QImage::Format_ARGB32_Premultiplied};
+    render.fill(Qt::transparent);
+
+    {
+        QPainter painter{&render};
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        // Only the items bound a fill; the ruling is part of the background.
+        mSuppressBackgroundPaint = true;
+        QGraphicsScene::render(&painter, QRectF{0, 0, double(width), double(height)}, area);
+        mSuppressBackgroundPaint = false;
+    }
+
+    QVector<uchar> ink(width * height, 0);
+
+    for (int y = 0; y < height; ++y)
+    {
+        const QRgb* line = reinterpret_cast<const QRgb*>(render.constScanLine(y));
+
+        for (int x = 0; x < width; ++x)
+        {
+            if (qAlpha(line[x]) >= sInkAlphaThreshold)
+            {
+                ink[y * width + x] = 1;
+            }
+        }
+    }
+
+    dilateMask(ink, width, height, qRound(sGapClosePx * scale));
+
+    const int seedX = qBound(0, qRound((scenePos.x() - area.left()) * scale), width - 1);
+    const int seedY = qBound(0, qRound((scenePos.y() - area.top()) * scale), height - 1);
+
+    if (ink.at(seedY * width + seedX))
+    {
+        // Clicking on a stroke, or within a closed gap, fills nothing.
+        return false;
+    }
+
+    QVector<uchar> filled(width * height, 0);
+    QVector<int> stack;
+    stack.reserve(1024);
+    stack << seedY * width + seedX;
+    filled[seedY * width + seedX] = 1;
+
+    while (!stack.isEmpty())
+    {
+        const int index = stack.takeLast();
+        const int x = index % width;
+        const int y = index / width;
+
+        const int neighbours[4] = {
+            x > 0 ? index - 1 : -1,
+            x < width - 1 ? index + 1 : -1,
+            y > 0 ? index - width : -1,
+            y < height - 1 ? index + width : -1
+        };
+
+        for (const int neighbour : neighbours)
+        {
+            if (neighbour >= 0 && !filled.at(neighbour) && !ink.at(neighbour))
+            {
+                filled[neighbour] = 1;
+                stack << neighbour;
+            }
+        }
+    }
+
+    // Grow the result so it slides under the antialiased edges of the strokes.
+    dilateMask(filled, width, height, qRound(sFillExpandPx * scale));
+
+    // Turn the mask into an outline. Merging the runs into a region and
+    // simplifying keeps enclosed holes, which a contour trace of the outer
+    // boundary alone would lose.
+    QRegion region;
+
+    for (int y = 0; y < height; ++y)
+    {
+        int runStart = -1;
+
+        for (int x = 0; x <= width; ++x)
+        {
+            const bool inside = x < width && filled.at(y * width + x);
+
+            if (inside && runStart < 0)
+            {
+                runStart = x;
+            }
+            else if (!inside && runStart >= 0)
+            {
+                region += QRect(runStart, y, x - runStart, 1);
+                runStart = -1;
+            }
+        }
+    }
+
+    if (region.isEmpty())
+    {
+        return false;
+    }
+
+    QPainterPath path;
+
+    for (const QRect& rect : region)
+    {
+        path.addRect(rect);
+    }
+
+    path = path.simplified();
+
+    // toFillPolygons() bridges enclosed holes into their outer contour, so the
+    // result still fills correctly as plain polygons.
+    const QList<QPolygonF> polygons = path.toFillPolygons();
+
+    if (polygons.isEmpty())
+    {
+        return false;
+    }
+
+    QTransform toScene;
+    toScene.translate(area.left(), area.top());
+    toScene.scale(1. / scale, 1. / scale);
+
+    // The fill goes under everything already drawn, so it tucks beneath the
+    // antialiased edges of the strokes that bound it rather than covering them.
+    const qreal bottom = mZLayerController->getBottomLimit(itemLayerType::DrawingItem);
+    qreal fillZ = bottom;
+
+    for (const QGraphicsItem* item : items())
+    {
+        if (mZLayerController->typeForData(const_cast<QGraphicsItem*>(item)) == itemLayerType::DrawingItem)
+        {
+            fillZ = std::min(fillZ, item->zValue());
+        }
+    }
+
+    // Stay inside the drawing layer even when it is already full at the bottom.
+    fillZ = std::max(bottom, fillZ - 0.001);
+
+    QSet<QGraphicsItem*> addedItems;
+
+    for (const QPolygonF& polygon : polygons)
+    {
+        if (polygon.size() < 3)
+        {
+            continue;
+        }
+
+        UBGraphicsPolygonItem* fillItem = new UBGraphicsPolygonItem(toScene.map(polygon), nullptr);
+        initPolygonItem(fillItem);
+        fillItem->setFillRule(Qt::OddEvenFill);
+
+        addItem(fillItem);
+        UBGraphicsItem::assignZValue(fillItem, fillZ);
+        addedItems << fillItem;
+    }
+
+    if (addedItems.isEmpty())
+    {
+        return false;
+    }
+
+    if (mUndoRedoStackEnabled && UBApplication::undoStack)
+    {
+        UBGraphicsItemUndoCommand* command =
+                new UBGraphicsItemUndoCommand(shared_from_this(), QSet<QGraphicsItem*>{}, addedItems);
+        UBApplication::undoStack->push(command);
+    }
+
+    setDocumentUpdated();
+    return true;
 }
 
 void UBGraphicsScene::drawCurve(const QList<QPair<QPointF, qreal> >& points)
@@ -2802,6 +3108,11 @@ void UBGraphicsScene::drawItems (QPainter * painter, int numItems,
 
 void UBGraphicsScene::drawBackground(QPainter *painter, const QRectF &rect)
 {
+    if (mSuppressBackgroundPaint)
+    {
+        return;
+    }
+
     if (mIsDesktopMode)
     {
         QGraphicsScene::drawBackground (painter, rect);
