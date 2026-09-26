@@ -41,6 +41,12 @@
 #include "document/UBDocument.h"
 
 #include "gui/UBMainWindow.h"
+
+#include "core/UB.h"
+
+// Hold the line button this long to open its sub-tool pop-out, matching the
+// desktop palette's PROPERTY_PALETTE_TIMER.
+#define LINE_TOOLS_PALETTE_TIMER 350
 #include "gui/UBStylusPalette.h"
 #include "gui/UBKeyboardPalette.h"
 #include "gui/UBToolWidget.h"
@@ -84,6 +90,9 @@ UBBoardPaletteManager::UBBoardPaletteManager(QWidget* container, UBBoardControll
     , mContainer(container)
     , mBoardControler(pBoardController)
     , mStylusPalette(0)
+    , mLineToolsPalette(0)
+    , mPendingLineButtonPressed(false)
+    , mLineArrowClicked(false)
     , mZoomPalette(0)
     , mTipPalette(0)
     , mLeftPalette(NULL)
@@ -130,6 +139,199 @@ void UBBoardPaletteManager::setupLayout()
 /**
  * \brief Set up the dock palette widgets
  */
+void UBBoardPaletteManager::setupLineToolsPalette()
+{
+    UBMainWindow* mainWindow = UBApplication::mainWindow;
+
+    // The line button gains the pop-out arrow the desktop palette uses for its
+    // own sub-tools.
+    QIcon lineIcon;
+    lineIcon.addFile(":images/stylusPalette/lineArrow.svg", QSize(), QIcon::Normal, QIcon::Off);
+    lineIcon.addFile(":images/stylusPalette/lineOnArrow.svg", QSize(), QIcon::Normal, QIcon::On);
+    mainWindow->actionLine->setIcon(lineIcon);
+
+    mLineToolsPalette = new UBActionPalette(Qt::TopLeftCorner, mContainer, Qt::Horizontal);
+    mLineToolsPalette->setObjectName("LineToolsPalette");
+
+    // No WA_StyledBackground here. The desktop property palettes set it because
+    // the themes style them by object name; with no rule of its own this
+    // palette would paint no background at all and show as an empty box.
+    // Leaving it clear lets UBFloatingPalette paint the same frame the stylus
+    // palette gets.
+
+    QList<QAction*> actions;
+    actions << mainWindow->actionLine;
+    actions << mainWindow->actionRectangle;
+    actions << mainWindow->actionFloodFill;
+
+    // Creating a button reassigns its action's "id" property, which the stylus
+    // palette uses to identify the tool a double click landed on. Put the line
+    // action's own id back afterwards.
+    const QVariant lineActionId = mainWindow->actionLine->property("id");
+
+    mLineToolsPalette->setActions(actions);
+    mLineToolsPalette->setButtonIconSize(QSize(42, 42));
+    mLineToolsPalette->adjustSizeAndPosition();
+
+    if (lineActionId.isValid())
+        mainWindow->actionLine->setProperty("id", lineActionId);
+
+    // Deliberately not grouped here: the three actions belong in the stylus
+    // palette's group so that they stay exclusive with the other tools. A
+    // QAction can only be in one group, and grouping them here would take them
+    // out of it.
+    if (QActionGroup* stylusGroup = mainWindow->actionLine->actionGroup())
+    {
+        stylusGroup->addAction(mainWindow->actionRectangle);
+        stylusGroup->addAction(mainWindow->actionFloodFill);
+    }
+
+    mLineToolsPalette->hide();
+
+    mLineToolsHoldTimer.setSingleShot(true);
+    connect(&mLineToolsHoldTimer, SIGNAL(timeout()), this, SLOT(lineActionReleased()));
+
+    if (UBActionPaletteButton* lineButton = mStylusPalette->getButtonFromAction(mainWindow->actionLine))
+    {
+        connect(lineButton, SIGNAL(pressed()), this, SLOT(lineActionPressed()));
+        connect(lineButton, SIGNAL(released()), this, SLOT(lineActionReleased()));
+    }
+
+    // Close the pop-out once a sub-tool has been chosen, and keep the stylus
+    // palette's button showing which one is current.
+    connect(UBDrawingController::drawingController(), SIGNAL(stylusToolChanged(int,int)),
+            this, SLOT(updateLineToolButton()));
+}
+
+bool UBBoardPaletteManager::lineSubtoolArrowPressed() const
+{
+    UBActionPaletteButton* button = mStylusPalette->getButtonFromAction(UBApplication::mainWindow->actionLine);
+
+    if (!button)
+        return false;
+
+    const QPoint localPosition = button->mapFromGlobal(QCursor::pos());
+    const int arrowExtent = qMax(14, qRound(qMin(button->width(), button->height()) * 0.36));
+    const QRect arrowRegion(button->width() - arrowExtent, button->height() - arrowExtent,
+                            arrowExtent, arrowExtent);
+    return arrowRegion.contains(localPosition);
+}
+
+void UBBoardPaletteManager::lineActionPressed()
+{
+    mLineButtonPressedTime = QTime::currentTime();
+    mPendingLineButtonPressed = true;
+
+    if (lineSubtoolArrowPressed())
+    {
+        mLineArrowClicked = true;
+        lineActionReleased();
+        return;
+    }
+
+    mLineToolsHoldTimer.start(LINE_TOOLS_PALETTE_TIMER);
+}
+
+void UBBoardPaletteManager::lineActionReleased()
+{
+    mLineToolsHoldTimer.stop();
+
+    if (mPendingLineButtonPressed)
+    {
+        if (mLineArrowClicked
+            || mLineButtonPressedTime.msecsTo(QTime::currentTime()) > LINE_TOOLS_PALETTE_TIMER - 100)
+        {
+            toggleLineToolsPalette();
+        }
+        else
+        {
+            UBApplication::mainWindow->actionLine->trigger();
+        }
+
+        mPendingLineButtonPressed = false;
+    }
+
+    mLineArrowClicked = false;
+}
+
+void UBBoardPaletteManager::toggleLineToolsPalette()
+{
+    if (!mLineToolsPalette)
+        return;
+
+    const bool show = !mLineToolsPalette->isVisible();
+
+    if (show)
+        positionLineToolsPalette();
+
+    mLineToolsPalette->setVisible(show);
+
+    if (show)
+        mLineToolsPalette->raise();
+}
+
+void UBBoardPaletteManager::positionLineToolsPalette()
+{
+    QPoint position = mStylusPalette->geometry().topLeft();
+    const QList<QAction*> actions = mStylusPalette->actions();
+    int offset = 0;
+
+    foreach (QAction* action, actions)
+    {
+        if (action == UBApplication::mainWindow->actionLine)
+        {
+            const int index = actions.indexOf(action);
+            offset = index * (mStylusPalette->buttonSize().height() + 2 * mStylusPalette->border() + 6);
+            break;
+        }
+    }
+
+    // Prefer the right of the stylus palette, falling back to its left when
+    // there is not enough room.
+    if (position.x() <= mContainer->width() - (mLineToolsPalette->width() + mStylusPalette->width() + 20))
+    {
+        position += QPoint(mStylusPalette->width(), offset);
+    }
+    else
+    {
+        position += QPoint(-mLineToolsPalette->width(), offset);
+    }
+
+    mLineToolsPalette->setCustomPosition(true);
+    mLineToolsPalette->move(position);
+}
+
+void UBBoardPaletteManager::updateLineToolButton()
+{
+    if (!mLineToolsPalette)
+        return;
+
+    const int tool = UBDrawingController::drawingController()->stylusTool();
+    QString off{":images/stylusPalette/lineArrow.svg"};
+    QString on{":images/stylusPalette/lineOnArrow.svg"};
+
+    // The three sub-tools are exclusive, so selecting one unchecks the line
+    // action. Reflect the active one in the button instead, otherwise the
+    // palette would show no tool selected at all.
+    if (tool == UBStylusTool::Rectangle)
+    {
+        off = ":images/stylusPalette/rectangleArrow.svg";
+        on = ":images/stylusPalette/rectangleOnArrow.svg";
+    }
+    else if (tool == UBStylusTool::FloodFill)
+    {
+        off = ":images/stylusPalette/fillArrow.svg";
+        on = ":images/stylusPalette/fillOnArrow.svg";
+    }
+
+    QIcon icon;
+    icon.addFile(off, QSize(), QIcon::Normal, QIcon::Off);
+    icon.addFile(on, QSize(), QIcon::Normal, QIcon::On);
+    UBApplication::mainWindow->actionLine->setIcon(icon);
+
+    mLineToolsPalette->hide();
+}
+
 void UBBoardPaletteManager::setupDockPaletteWidgets()
 {
 
@@ -240,6 +442,8 @@ void UBBoardPaletteManager::setupPalettes()
     mStylusPalette = new UBStylusPalette(mContainer, UBSettings::settings()->appToolBarOrientationVertical->get().toBool() ? Qt::Vertical : Qt::Horizontal);
     connect(mStylusPalette, SIGNAL(stylusToolDoubleClicked(int)), UBApplication::boardController, SLOT(stylusToolDoubleClicked(int)));
     mStylusPalette->show(); // always show stylus palette at startup
+
+    setupLineToolsPalette();
 
     mZoomPalette = new UBZoomPalette(mContainer);
 

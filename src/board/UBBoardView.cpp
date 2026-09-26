@@ -2008,6 +2008,8 @@ void UBBoardView::setToolCursor (int tool)
         controlViewport->setCursor (UBResources::resources ()->playCursor);
         break;
     case UBStylusTool::Line:
+    case UBStylusTool::Rectangle:
+    case UBStylusTool::FloodFill:
         controlViewport->setCursor (UBResources::resources ()->penCursor);
         break;
     case UBStylusTool::Text:

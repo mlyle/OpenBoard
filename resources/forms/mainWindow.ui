@@ -1504,6 +1504,38 @@
     <string>Ctrl+G</string>
    </property>
   </action>
+  <action name="actionRectangle">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="icon">
+    <iconset resource="../OpenBoard.qrc">
+     <normaloff>:/images/stylusPalette/rectangle.svg</normaloff>
+     <normalon>:/images/stylusPalette/rectangleOn.svg</normalon>:/images/stylusPalette/rectangle.svg</iconset>
+   </property>
+   <property name="text">
+    <string>Rectangle</string>
+   </property>
+   <property name="toolTip">
+    <string>Draw Rectangles</string>
+   </property>
+  </action>
+  <action name="actionFloodFill">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="icon">
+    <iconset resource="../OpenBoard.qrc">
+     <normaloff>:/images/stylusPalette/fill.svg</normaloff>
+     <normalon>:/images/stylusPalette/fillOn.svg</normalon>:/images/stylusPalette/fill.svg</iconset>
+   </property>
+   <property name="text">
+    <string>Flood Fill</string>
+   </property>
+   <property name="toolTip">
+    <string>Fill an Enclosed Area</string>
+   </property>
+  </action>
   <action name="actionLine">
    <property name="checkable">
     <bool>true</bool>

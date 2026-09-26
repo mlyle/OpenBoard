@@ -142,6 +142,16 @@
         <file>images/stylusPalette/pen.png</file>
         <file>images/stylusPalette/penOn.png</file>
         <file>images/stylusPalette/line.png</file>
+        <file>images/stylusPalette/lineArrow.svg</file>
+        <file>images/stylusPalette/lineOnArrow.svg</file>
+        <file>images/stylusPalette/rectangle.svg</file>
+        <file>images/stylusPalette/rectangleOn.svg</file>
+        <file>images/stylusPalette/rectangleArrow.svg</file>
+        <file>images/stylusPalette/rectangleOnArrow.svg</file>
+        <file>images/stylusPalette/fill.svg</file>
+        <file>images/stylusPalette/fillOn.svg</file>
+        <file>images/stylusPalette/fillArrow.svg</file>
+        <file>images/stylusPalette/fillOnArrow.svg</file>
         <file>images/stylusPalette/lineOn.png</file>
         <file>images/stylusPalette/zoomOut.png</file>
         <file>images/stylusPalette/zoomOutOn.png</file>

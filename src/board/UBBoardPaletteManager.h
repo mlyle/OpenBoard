@@ -31,6 +31,7 @@
 #define UBBOARDPALETTEMANAGER_H_
 
 #include <QtGui>
+#include <QTimer>
 
 #include "gui/UBLeftPalette.h"
 #include "gui/UBRightPalette.h"
@@ -102,11 +103,22 @@ class UBBoardPaletteManager : public QObject
         void connectPalettes();
         void positionFreeDisplayPalette();
         void setupDockPaletteWidgets();
+        void setupLineToolsPalette();
+        void positionLineToolsPalette();
+        bool lineSubtoolArrowPressed() const;
 
         QWidget* mContainer;
         UBBoardController *mBoardControler;
 
         UBStylusPalette *mStylusPalette;
+
+        // Sub-tools reached through the arrow on the stylus palette's line
+        // button, mirroring the property pop-outs of the desktop palette.
+        UBActionPalette* mLineToolsPalette;
+        QTimer mLineToolsHoldTimer;
+        QTime mLineButtonPressedTime;
+        bool mPendingLineButtonPressed;
+        bool mLineArrowClicked;
 
         UBZoomPalette *mZoomPalette;
 	UBStartupHintsPalette* mTipPalette;
@@ -152,6 +164,11 @@ class UBBoardPaletteManager : public QObject
         bool mDownloadInProgress;
 
     private slots:
+        void lineActionPressed();
+        void lineActionReleased();
+        void toggleLineToolsPalette();
+        void updateLineToolButton();
+
 
         void toggleBackgroundPalette(bool checked);
         void backgroundPaletteClosed();
