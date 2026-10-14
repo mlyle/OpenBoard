@@ -315,6 +315,9 @@ void UBSettings::init()
 
     boardUseHighResTabletEvent = new UBSetting(this, "Board", "UseHighResTabletEvent", true);
 
+    shapeLastFill = new UBSetting(this, "Board", "ShapeLastFill", "none");
+    shapeLastStroke = new UBSetting(this, "Board", "ShapeLastStroke", "#595959");
+
     boardInterpolatePenStrokes = new UBSetting(this, "Board", "InterpolatePenStrokes", true);
     boardSimplifyPenStrokes = new UBSetting(this, "Board", "SimplifyPenStrokes", true);
     boardSimplifyPenStrokesThresholdAngle = new UBSetting(this, "Board", "SimplifyPenStrokesThresholdAngle", 2);

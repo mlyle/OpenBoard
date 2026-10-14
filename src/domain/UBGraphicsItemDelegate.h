@@ -54,6 +54,8 @@ class UBGraphicsScene;
 class UBGraphicsDelegateFrame;
 class UBGraphicsWidgetItem;
 class UBGraphicsMediaItem;
+class UBGraphicsSvgItem;
+class QMenu;
 
 class DelegateButton: public QGraphicsSvgItem
 {
@@ -352,6 +354,7 @@ class UBGraphicsItemDelegate : public QObject
         QAction* mSetAsBackgroundAction;
         QAction* mGotoContentSourceAction;
 
+
         UBGraphicsDelegateFrame* mFrame;
         qreal mFrameWidth;
         qreal mAntiScaleRatio;
@@ -367,6 +370,19 @@ class UBGraphicsItemDelegate : public QObject
 protected slots:
         virtual void setAsBackground();
         virtual void gotoContentSource();
+        void applyShapeColour();
+
+    protected:
+        enum class ShapeColourTarget
+        {
+            Fill,
+            Stroke,
+            Text
+        };
+
+        static QIcon colourSwatch(const QColor& colour);
+        void buildShapeColourMenu(QMenu* menu, ShapeColourTarget target, bool allowNone);
+        void setShapeColour(UBGraphicsSvgItem* svgItem, ShapeColourTarget target, const QColor& colour);
 
 private:
         void updateFrame();

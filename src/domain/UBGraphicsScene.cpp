@@ -1826,6 +1826,18 @@ UBGraphicsSvgItem* UBGraphicsScene::addSvg(const QUrl& pSvgFileUrl, const QPoint
     svgItem->setFlag(QGraphicsItem::ItemIsMovable, true);
     svgItem->setFlag(QGraphicsItem::ItemIsSelectable, true);
 
+    // Carry the last colours chosen onto the next shape, so a run of them can be
+    // placed without recolouring each one.
+    if (svgItem->isRecolourable())
+    {
+        const QColor fill = UBGraphicsSvgItem::colourFromSetting(
+            UBSettings::settings()->shapeLastFill->get().toString());
+        const QColor stroke = UBGraphicsSvgItem::colourFromSetting(
+            UBSettings::settings()->shapeLastStroke->get().toString());
+
+        svgItem->setShapeColors(fill, stroke);
+    }
+
     qreal sscale = 1 / UBApplication::boardController->systemScaleFactor();
     svgItem->setTransform(QTransform::fromScale(sscale, sscale), true);
 
@@ -1842,29 +1854,42 @@ UBGraphicsSvgItem* UBGraphicsScene::addSvg(const QUrl& pSvgFileUrl, const QPoint
 
     setDocumentUpdated();
 
-    QString documentPath = UBApplication::boardController->selectedDocument()->persistencePath();
-
-    QString fileName = svgItem->mediaAssets().at(0);
-
-    QString completePath = documentPath + "/" + fileName;
-
-    if (!QFile::exists(completePath))
+    if (!persistSvgAsset(svgItem))
     {
-        QDir dir;
-        dir.mkdir(documentPath + "/" + UBPersistenceManager::imageDirectory);
-
-        QFile file(completePath);
-        if (!file.open(QIODevice::WriteOnly))
-        {
-            qWarning() << "cannot open file for writing embeded svg content " << completePath;
-            return NULL;
-        }
-
-        file.write(svgItem->fileData());
-        file.close();
+        return NULL;
     }
 
     return svgItem;
+}
+
+bool UBGraphicsScene::persistSvgAsset(UBGraphicsSvgItem* svgItem)
+{
+    // The asset is named after a hash of its contents, so an edited shape is a
+    // new file rather than a rewrite of the old one.
+    const QString documentPath = UBApplication::boardController->selectedDocument()->persistencePath();
+    const QString fileName = svgItem->mediaAssets().at(0);
+    const QString completePath = documentPath + "/" + fileName;
+
+    if (QFile::exists(completePath))
+    {
+        return true;
+    }
+
+    QDir dir;
+    dir.mkdir(documentPath + "/" + UBPersistenceManager::imageDirectory);
+
+    QFile file(completePath);
+
+    if (!file.open(QIODevice::WriteOnly))
+    {
+        qWarning() << "cannot open file for writing embeded svg content " << completePath;
+        return false;
+    }
+
+    file.write(svgItem->fileData());
+    file.close();
+
+    return true;
 }
 
 UBGraphicsTextItem* UBGraphicsScene::addText(const QString& pString, const QPointF& pTopLeft)

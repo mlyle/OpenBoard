@@ -31,6 +31,8 @@
 #define UBGRAPHICSSVGITEM_H_
 
 #include <QtGui>
+#include <QColor>
+#include <QDomElement>
 #include <QtSvg>
 
 #include "UBMediaAssetItem.h"
@@ -54,6 +56,19 @@ class UBGraphicsSvgItem: public QGraphicsSvgItem, public UBMediaAssetItem, publi
         virtual void setMediaAsset(const QString& documentPath, const QString& mediaAsset) override;
 
         QByteArray fileData() const;
+
+        // Shapes from the library carry their geometry in a single group marked
+        // ub-body, with the colours on that group. Anything else, an imported
+        // drawing say, has no such group and is left alone.
+        bool isRecolourable() const;
+        QColor shapeFill() const;
+        QColor shapeStroke() const;
+        bool setShapeColors(const QColor& fill, const QColor& stroke);
+
+        // Colours round-trip through settings as text; an invalid colour, which
+        // is how "no fill" is expressed, stores as none.
+        static QString colourToSetting(const QColor& colour);
+        static QColor colourFromSetting(const QString& value);
 
         enum { Type = UBGraphicsItemType::SvgItemType };
 
@@ -82,8 +97,12 @@ class UBGraphicsSvgItem: public QGraphicsSvgItem, public UBMediaAssetItem, publi
 
         virtual QVariant itemChange(GraphicsItemChange change, const QVariant &value) override;
 
+        static QDomElement findShapeBody(const QDomElement& element);
+
         QByteArray mFileData;
         QUuid mMediaAssetUuid;
+        // Renderers built by setShapeColors(), freed as they are superseded.
+        QSvgRenderer* mOwnedRenderer{nullptr};
 };
 
 #endif /* UBGRAPHICSSVGITEM_H_ */

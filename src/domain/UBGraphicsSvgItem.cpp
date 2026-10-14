@@ -38,6 +38,60 @@
 #include "core/UBApplication.h"
 #include "core/UBPersistenceManager.h"
 
+#include <QDomDocument>
+
+namespace
+{
+    // Marks the group holding a library shape's geometry, and carrying its
+    // colours so that SVG inheritance reaches every element inside.
+    const QString sShapeBodyId = QStringLiteral("ub-body");
+
+    QColor colorFrom(const QDomElement& element, const QString& attribute)
+    {
+        const QString value = element.attribute(attribute).trimmed();
+
+        if (value.isEmpty() || value.compare(QStringLiteral("none"), Qt::CaseInsensitive) == 0)
+        {
+            return {};
+        }
+
+        QColor color(value);
+        bool ok = false;
+        const double opacity = element.attribute(attribute + QStringLiteral("-opacity")).toDouble(&ok);
+
+        if (ok && color.isValid())
+        {
+            color.setAlphaF(qBound(0., opacity, 1.));
+        }
+
+        return color;
+    }
+
+    void setColorOn(QDomElement& element, const QString& attribute, const QColor& color)
+    {
+        const QString opacityAttribute = attribute + QStringLiteral("-opacity");
+
+        if (!color.isValid())
+        {
+            element.setAttribute(attribute, QStringLiteral("none"));
+            element.removeAttribute(opacityAttribute);
+            return;
+        }
+
+        element.setAttribute(attribute, color.name(QColor::HexRgb));
+
+        // SVG has no alpha in the colour itself; it goes in the opacity.
+        if (color.alphaF() < 1.)
+        {
+            element.setAttribute(opacityAttribute, QString::number(color.alphaF(), 'g', 3));
+        }
+        else
+        {
+            element.removeAttribute(opacityAttribute);
+        }
+    }
+}
+
 #include "board/UBBoardController.h"
 
 #include "frameworks/UBFileSystemUtils.h"
@@ -112,6 +166,116 @@ void UBGraphicsSvgItem::setMediaAsset(const QString& documentPath, const QString
 QByteArray UBGraphicsSvgItem::fileData() const
 {
     return mFileData;
+}
+
+QString UBGraphicsSvgItem::colourToSetting(const QColor& colour)
+{
+    return colour.isValid() ? colour.name(QColor::HexArgb) : QStringLiteral("none");
+}
+
+QColor UBGraphicsSvgItem::colourFromSetting(const QString& value)
+{
+    const QString trimmed = value.trimmed();
+
+    if (trimmed.isEmpty() || trimmed.compare(QStringLiteral("none"), Qt::CaseInsensitive) == 0)
+    {
+        return {};
+    }
+
+    return QColor(trimmed);
+}
+
+QDomElement UBGraphicsSvgItem::findShapeBody(const QDomElement& element)
+{
+    // QDomDocument::elementById() is documented as never returning anything, so
+    // the tree is walked instead.
+    if (element.attribute(QStringLiteral("id")) == sShapeBodyId)
+    {
+        return element;
+    }
+
+    for (QDomElement child = element.firstChildElement(); !child.isNull();
+         child = child.nextSiblingElement())
+    {
+        const QDomElement found = findShapeBody(child);
+
+        if (!found.isNull())
+        {
+            return found;
+        }
+    }
+
+    return {};
+}
+
+bool UBGraphicsSvgItem::isRecolourable() const
+{
+    QDomDocument document;
+
+    if (!document.setContent(mFileData))
+    {
+        return false;
+    }
+
+    return !findShapeBody(document.documentElement()).isNull();
+}
+
+QColor UBGraphicsSvgItem::shapeFill() const
+{
+    QDomDocument document;
+
+    if (!document.setContent(mFileData))
+    {
+        return {};
+    }
+
+    return colorFrom(findShapeBody(document.documentElement()), QStringLiteral("fill"));
+}
+
+QColor UBGraphicsSvgItem::shapeStroke() const
+{
+    QDomDocument document;
+
+    if (!document.setContent(mFileData))
+    {
+        return {};
+    }
+
+    return colorFrom(findShapeBody(document.documentElement()), QStringLiteral("stroke"));
+}
+
+bool UBGraphicsSvgItem::setShapeColors(const QColor& fill, const QColor& stroke)
+{
+    QDomDocument document;
+
+    if (!document.setContent(mFileData))
+    {
+        return false;
+    }
+
+    QDomElement body = findShapeBody(document.documentElement());
+
+    if (body.isNull())
+    {
+        return false;
+    }
+
+    setColorOn(body, QStringLiteral("fill"), fill);
+    setColorOn(body, QStringLiteral("stroke"), stroke);
+
+    mFileData = document.toByteArray(2);
+
+    QSvgRenderer* renderer = new QSvgRenderer(mFileData, this);
+    setSharedRenderer(renderer);
+    delete mOwnedRenderer;
+    mOwnedRenderer = renderer;
+
+    // The asset file is named after a hash of the content, so recolouring gives
+    // the shape a new name and the caller has to write it out again.
+    mMediaAssetUuid = createMediaAssetUuid(mFileData);
+    update();
+
+    return true;
 }
 
 

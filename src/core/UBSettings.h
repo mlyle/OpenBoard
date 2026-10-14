@@ -300,6 +300,10 @@ class UBSettings : public QObject
 
         UBSetting* boardUseHighResTabletEvent;
 
+        // Last colours chosen for a shape, reapplied to the next one placed.
+        UBSetting* shapeLastFill;
+        UBSetting* shapeLastStroke;
+
         UBSetting* boardInterpolatePenStrokes;
         UBSetting* boardSimplifyPenStrokes;
         UBSetting* boardSimplifyPenStrokesThresholdAngle;

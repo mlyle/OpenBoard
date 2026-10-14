@@ -32,6 +32,13 @@
 #include <QDrag>
 
 #include "UBGraphicsItemDelegate.h"
+
+#include <QColorDialog>
+#include <QMenu>
+
+#include "core/UBSetting.h"
+
+#include "UBGraphicsSvgItem.h"
 #include "UBGraphicsMediaItemDelegate.h"
 #include "UBGraphicsDelegateFrame.h"
 #include "UBGraphicsScene.h"
@@ -810,6 +817,14 @@ void UBGraphicsItemDelegate::decorateMenu(QMenu* menu)
         mSetAsBackgroundAction->setIcon(backgroundIcon);
     }
 
+    UBGraphicsSvgItem* svgItem = qgraphicsitem_cast<UBGraphicsSvgItem*>(delegated());
+
+    if (svgItem && svgItem->isRecolourable())
+    {
+        buildShapeColourMenu(menu->addMenu(tr("Fill")), ShapeColourTarget::Fill, true);
+        buildShapeColourMenu(menu->addMenu(tr("Line")), ShapeColourTarget::Stroke, true);
+    }
+
     if (testUBFlags(GF_SHOW_CONTENT_SOURCE))
     {
         mGotoContentSourceAction = menu->addAction(tr("Web Inspector"), this, SLOT(gotoContentSource()));
@@ -817,6 +832,114 @@ void UBGraphicsItemDelegate::decorateMenu(QMenu* menu)
         QIcon sourceIcon;
         sourceIcon.addPixmap(QPixmap(":/images/libpalette/miniSearch.png"), QIcon::Normal, QIcon::On);
         mGotoContentSourceAction->setIcon(sourceIcon);
+    }
+}
+
+QIcon UBGraphicsItemDelegate::colourSwatch(const QColor& colour)
+{
+    QPixmap pixmap(24, 24);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(QPen(QColor("#808080")));
+
+    if (colour.isValid())
+    {
+        painter.setBrush(colour);
+        painter.drawRect(2, 2, 19, 19);
+    }
+    else
+    {
+        // "No colour" reads as an empty box struck through.
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRect(2, 2, 19, 19);
+        painter.setPen(QPen(QColor("#c04040"), 2));
+        painter.drawLine(3, 20, 20, 3);
+    }
+
+    return QIcon(pixmap);
+}
+
+void UBGraphicsItemDelegate::buildShapeColourMenu(QMenu* menu, ShapeColourTarget target, bool allowNone)
+{
+    const bool onDark = UBSettings::settings()->isDarkBackground();
+
+    if (allowNone)
+    {
+        QAction* none = menu->addAction(colourSwatch({}), tr("None"), this, SLOT(applyShapeColour()));
+        none->setData(QColor());
+        none->setProperty("ub-colour-target", int(target));
+        menu->addSeparator();
+    }
+
+    // The app's own pen palette, so a shape's colours match everything else.
+    for (const QColor& colour : UBSettings::settings()->penColors(onDark))
+    {
+        QAction* swatch = menu->addAction(colourSwatch(colour), colour.name(QColor::HexRgb),
+                                          this, SLOT(applyShapeColour()));
+        swatch->setData(colour);
+        swatch->setProperty("ub-colour-target", int(target));
+    }
+
+    menu->addSeparator();
+
+    QAction* more = menu->addAction(tr("More..."), this, SLOT(applyShapeColour()));
+    more->setProperty("ub-colour-target", int(target));
+    more->setProperty("ub-colour-pick", true);
+}
+
+void UBGraphicsItemDelegate::applyShapeColour()
+{
+    QAction* action = qobject_cast<QAction*>(sender());
+    UBGraphicsSvgItem* svgItem = qgraphicsitem_cast<UBGraphicsSvgItem*>(delegated());
+
+    if (!action || !svgItem || !svgItem->isRecolourable())
+    {
+        return;
+    }
+
+    const auto target = ShapeColourTarget(action->property("ub-colour-target").toInt());
+    QColor colour = action->data().value<QColor>();
+
+    if (action->property("ub-colour-pick").toBool())
+    {
+        const QColor current = target == ShapeColourTarget::Fill ? svgItem->shapeFill()
+                                                                 : svgItem->shapeStroke();
+        colour = QColorDialog::getColor(current.isValid() ? current : QColor(Qt::white),
+                                        UBApplication::boardController->controlView(),
+                                        tr("Colour"), QColorDialog::ShowAlphaChannel);
+
+        if (!colour.isValid())
+        {
+            return;
+        }
+    }
+
+    setShapeColour(svgItem, target, colour);
+}
+
+void UBGraphicsItemDelegate::setShapeColour(UBGraphicsSvgItem* svgItem, ShapeColourTarget target,
+                                            const QColor& colour)
+{
+    const QColor fill = target == ShapeColourTarget::Fill ? colour : svgItem->shapeFill();
+    const QColor stroke = target == ShapeColourTarget::Stroke ? colour : svgItem->shapeStroke();
+
+    if (!svgItem->setShapeColors(fill, stroke))
+    {
+        return;
+    }
+
+    // Remembered so the next shape placed comes out the same, which is the
+    // point when laying out a diagram.
+    UBSettings::settings()->shapeLastFill->set(UBGraphicsSvgItem::colourToSetting(fill));
+    UBSettings::settings()->shapeLastStroke->set(UBGraphicsSvgItem::colourToSetting(stroke));
+
+    // Recolouring renames the asset, so it has to be written into the document.
+    if (auto scene = svgItem->scene())
+    {
+        scene->persistSvgAsset(svgItem);
+        scene->setModified(true);
     }
 }
 
