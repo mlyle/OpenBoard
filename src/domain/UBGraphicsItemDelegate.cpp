@@ -823,6 +823,8 @@ void UBGraphicsItemDelegate::decorateMenu(QMenu* menu)
     {
         buildShapeColourMenu(menu->addMenu(tr("Fill")), ShapeColourTarget::Fill, true);
         buildShapeColourMenu(menu->addMenu(tr("Line")), ShapeColourTarget::Stroke, true);
+        buildShapeColourMenu(menu->addMenu(tr("Text Colour")), ShapeColourTarget::Text, false);
+        menu->addAction(tr("Edit Label"), this, SLOT(editShapeText()));
     }
 
     if (testUBFlags(GF_SHOW_CONTENT_SOURCE))
@@ -904,8 +906,15 @@ void UBGraphicsItemDelegate::applyShapeColour()
 
     if (action->property("ub-colour-pick").toBool())
     {
-        const QColor current = target == ShapeColourTarget::Fill ? svgItem->shapeFill()
-                                                                 : svgItem->shapeStroke();
+        QColor current;
+
+        switch (target)
+        {
+        case ShapeColourTarget::Fill:   current = svgItem->shapeFill();      break;
+        case ShapeColourTarget::Stroke: current = svgItem->shapeStroke();    break;
+        case ShapeColourTarget::Text:   current = svgItem->shapeTextColor(); break;
+        }
+
         colour = QColorDialog::getColor(current.isValid() ? current : QColor(Qt::white),
                                         UBApplication::boardController->controlView(),
                                         tr("Colour"), QColorDialog::ShowAlphaChannel);
@@ -922,6 +931,21 @@ void UBGraphicsItemDelegate::applyShapeColour()
 void UBGraphicsItemDelegate::setShapeColour(UBGraphicsSvgItem* svgItem, ShapeColourTarget target,
                                             const QColor& colour)
 {
+    if (target == ShapeColourTarget::Text)
+    {
+        // The label's colour is document data rather than part of the shape's
+        // own SVG, so the asset is untouched.
+        svgItem->setShapeTextColor(colour);
+        UBSettings::settings()->shapeLastTextColor->set(UBGraphicsSvgItem::colourToSetting(colour));
+
+        if (auto scene = svgItem->scene())
+        {
+            scene->setModified(true);
+        }
+
+        return;
+    }
+
     const QColor fill = target == ShapeColourTarget::Fill ? colour : svgItem->shapeFill();
     const QColor stroke = target == ShapeColourTarget::Stroke ? colour : svgItem->shapeStroke();
 
@@ -941,6 +965,20 @@ void UBGraphicsItemDelegate::setShapeColour(UBGraphicsSvgItem* svgItem, ShapeCol
         scene->persistSvgAsset(svgItem);
         scene->setModified(true);
     }
+}
+
+void UBGraphicsItemDelegate::editShapeText()
+{
+    UBGraphicsSvgItem* svgItem = qgraphicsitem_cast<UBGraphicsSvgItem*>(delegated());
+
+    if (!svgItem || !svgItem->isRecolourable())
+    {
+        return;
+    }
+
+    // Typed straight into the shape rather than through a dialog; the item
+    // commits the text itself when focus leaves it.
+    svgItem->beginLabelEdit();
 }
 
 void UBGraphicsItemDelegate::updateMenuActionState()

@@ -1836,6 +1836,8 @@ UBGraphicsSvgItem* UBGraphicsScene::addSvg(const QUrl& pSvgFileUrl, const QPoint
             UBSettings::settings()->shapeLastStroke->get().toString());
 
         svgItem->setShapeColors(fill, stroke);
+        svgItem->setShapeTextColor(UBGraphicsSvgItem::colourFromSetting(
+            UBSettings::settings()->shapeLastTextColor->get().toString()));
     }
 
     qreal sscale = 1 / UBApplication::boardController->systemScaleFactor();

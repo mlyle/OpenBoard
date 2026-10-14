@@ -371,6 +371,7 @@ protected slots:
         virtual void setAsBackground();
         virtual void gotoContentSource();
         void applyShapeColour();
+        void editShapeText();
 
     protected:
         enum class ShapeColourTarget

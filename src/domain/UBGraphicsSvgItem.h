@@ -70,6 +70,18 @@ class UBGraphicsSvgItem: public QGraphicsSvgItem, public UBMediaAssetItem, publi
         static QString colourToSetting(const QColor& colour);
         static QColor colourFromSetting(const QString& value);
 
+        QString shapeText() const;
+        void setShapeText(const QString& text);
+        QColor shapeTextColor() const;
+        void setShapeTextColor(const QColor& colour);
+
+        // Puts the caret in the label and lets it be typed into directly,
+        // rather than through a dialog.
+        void beginLabelEdit();
+        // Called by the label when editing finishes or its content changes.
+        void labelEdited();
+        void labelEditFinished();
+
         enum { Type = UBGraphicsItemType::SvgItemType };
 
         virtual int type() const override
@@ -98,11 +110,20 @@ class UBGraphicsSvgItem: public QGraphicsSvgItem, public UBMediaAssetItem, publi
         virtual QVariant itemChange(GraphicsItemChange change, const QVariant &value) override;
 
         static QDomElement findShapeBody(const QDomElement& element);
+        void updateShapeTextLayout();
 
         QByteArray mFileData;
         QUuid mMediaAssetUuid;
         // Renderers built by setShapeColors(), freed as they are superseded.
         QSvgRenderer* mOwnedRenderer{nullptr};
+
+        QString mShapeText;
+        QColor mShapeTextColor{Qt::black};
+        // A plain QGraphicsTextItem subclass on purpose: UBGraphicsTextItem is a
+        // type the document writer knows, and would be saved as an item in its
+        // own right.
+        class LabelItem;
+        LabelItem* mTextItem{nullptr};
 };
 
 #endif /* UBGRAPHICSSVGITEM_H_ */

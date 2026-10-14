@@ -317,6 +317,7 @@ void UBSettings::init()
 
     shapeLastFill = new UBSetting(this, "Board", "ShapeLastFill", "none");
     shapeLastStroke = new UBSetting(this, "Board", "ShapeLastStroke", "#595959");
+    shapeLastTextColor = new UBSetting(this, "Board", "ShapeLastTextColor", "#000000");
 
     boardInterpolatePenStrokes = new UBSetting(this, "Board", "InterpolatePenStrokes", true);
     boardSimplifyPenStrokes = new UBSetting(this, "Board", "SimplifyPenStrokes", true);

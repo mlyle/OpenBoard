@@ -39,6 +39,11 @@
 #include "core/UBPersistenceManager.h"
 
 #include <QDomDocument>
+#include <QTextDocument>
+#include <QTextCursor>
+#include <QKeyEvent>
+
+#include <cmath>
 
 namespace
 {
@@ -282,7 +287,204 @@ bool UBGraphicsSvgItem::setShapeColors(const QColor& fill, const QColor& stroke)
 QVariant UBGraphicsSvgItem::itemChange(GraphicsItemChange change, const QVariant &value)
 {
     QVariant newValue = Delegate()->itemChange(change, value);
+
+    // Resizing goes through the item's transform, so the label has to be laid
+    // out again whenever it changes.
+    if (change == ItemTransformHasChanged)
+    {
+        updateShapeTextLayout();
+    }
+
     return QGraphicsSvgItem::itemChange(change, newValue);
+}
+
+class UBGraphicsSvgItem::LabelItem : public QGraphicsTextItem
+{
+public:
+    explicit LabelItem(UBGraphicsSvgItem* shape)
+        : QGraphicsTextItem(shape)
+        , mShape(shape)
+    {
+        connect(document(), &QTextDocument::contentsChanged, this, [this]() {
+            mShape->labelEdited();
+        });
+    }
+
+protected:
+    void focusOutEvent(QFocusEvent* event) override
+    {
+        QGraphicsTextItem::focusOutEvent(event);
+        mShape->labelEditFinished();
+    }
+
+    void keyPressEvent(QKeyEvent* event) override
+    {
+        // Escape leaves the label rather than typing into it.
+        if (event->key() == Qt::Key_Escape)
+        {
+            clearFocus();
+            return;
+        }
+
+        QGraphicsTextItem::keyPressEvent(event);
+    }
+
+private:
+    UBGraphicsSvgItem* mShape;
+};
+
+QString UBGraphicsSvgItem::shapeText() const
+{
+    return mShapeText;
+}
+
+void UBGraphicsSvgItem::setShapeText(const QString& text)
+{
+    mShapeText = text;
+
+    if (text.isEmpty())
+    {
+        delete mTextItem;
+        mTextItem = nullptr;
+        return;
+    }
+
+    if (!mTextItem)
+    {
+        mTextItem = new LabelItem(this);
+
+        // Part of the shape rather than an item of its own: no selection, no
+        // moving, and no place in the document.
+        mTextItem->setFlag(QGraphicsItem::ItemIsSelectable, false);
+        mTextItem->setFlag(QGraphicsItem::ItemIsMovable, false);
+        mTextItem->setTextInteractionFlags(Qt::NoTextInteraction);
+        mTextItem->setDefaultTextColor(mShapeTextColor);
+
+        QTextOption option = mTextItem->document()->defaultTextOption();
+        option.setAlignment(Qt::AlignCenter);
+        mTextItem->document()->setDefaultTextOption(option);
+    }
+
+    if (mTextItem->toPlainText() != text)
+    {
+        mTextItem->setPlainText(text);
+    }
+    updateShapeTextLayout();
+}
+
+QColor UBGraphicsSvgItem::shapeTextColor() const
+{
+    return mShapeTextColor;
+}
+
+void UBGraphicsSvgItem::setShapeTextColor(const QColor& colour)
+{
+    mShapeTextColor = colour.isValid() ? colour : QColor(Qt::black);
+
+    if (mTextItem)
+    {
+        mTextItem->setDefaultTextColor(mShapeTextColor);
+    }
+}
+
+void UBGraphicsSvgItem::beginLabelEdit()
+{
+    if (!mTextItem)
+    {
+        // Nothing to type into yet; make an empty label first.
+        setShapeText(QStringLiteral(" "));
+    }
+
+    if (!mTextItem)
+    {
+        return;
+    }
+
+    mTextItem->setTextInteractionFlags(Qt::TextEditorInteraction);
+    mTextItem->setFocus(Qt::MouseFocusReason);
+
+    QTextCursor cursor = mTextItem->textCursor();
+    cursor.select(QTextCursor::Document);
+    mTextItem->setTextCursor(cursor);
+}
+
+void UBGraphicsSvgItem::labelEdited()
+{
+    if (!mTextItem)
+    {
+        return;
+    }
+
+    mShapeText = mTextItem->toPlainText();
+    updateShapeTextLayout();
+}
+
+void UBGraphicsSvgItem::labelEditFinished()
+{
+    if (!mTextItem)
+    {
+        return;
+    }
+
+    mTextItem->setTextInteractionFlags(Qt::NoTextInteraction);
+    mShapeText = mTextItem->toPlainText().trimmed();
+
+    if (mShapeText.isEmpty())
+    {
+        // An emptied label leaves nothing behind.
+        delete mTextItem;
+        mTextItem = nullptr;
+    }
+    else
+    {
+        updateShapeTextLayout();
+    }
+
+    if (auto currentScene = scene())
+    {
+        currentScene->setModified(true);
+    }
+}
+
+void UBGraphicsSvgItem::updateShapeTextLayout()
+{
+    if (!mTextItem)
+    {
+        return;
+    }
+
+    const QRectF shapeRect = QGraphicsSvgItem::boundingRect();
+
+    if (shapeRect.isEmpty())
+    {
+        return;
+    }
+
+    // The shape is resized by scaling its transform, so a box stretched along
+    // one axis would stretch its label with it. Cancel just that anisotropy and
+    // keep the uniform part, so the text still grows with the shape but never
+    // distorts.
+    const QTransform shapeTransform = transform();
+    const qreal scaleX = std::hypot(shapeTransform.m11(), shapeTransform.m12());
+    const qreal scaleY = std::hypot(shapeTransform.m21(), shapeTransform.m22());
+    const qreal uniform = std::sqrt(std::max(scaleX * scaleY, 1e-9));
+    const qreal correctX = scaleX > 1e-9 ? uniform / scaleX : 1.;
+    const qreal correctY = scaleY > 1e-9 ? uniform / scaleY : 1.;
+
+    mTextItem->setTransform(QTransform::fromScale(correctX, correctY));
+
+    QFont font = mTextItem->font();
+    font.setPixelSize(qMax(8, qRound(shapeRect.height() / 6.)));
+    mTextItem->setFont(font);
+
+    // Wrapping width is in the text item's own coordinates, which the
+    // correction above has shrunk or grown relative to the shape's.
+    const qreal usableWidth = shapeRect.width() * 0.8;
+    mTextItem->setTextWidth(usableWidth / correctX);
+
+    const QRectF textRect = mTextItem->boundingRect();
+    mTextItem->setPos(shapeRect.center().x() - textRect.width() * correctX / 2.,
+                      shapeRect.center().y() - textRect.height() * correctY / 2.);
 }
 
 
@@ -362,6 +564,8 @@ void UBGraphicsSvgItem::copyItemParameters(UBItem *copy) const
         cp->setData(UBGraphicsItemData::ItemOwnZValue, this->data(UBGraphicsItemData::ItemOwnZValue));
         cp->setZValue(this->zValue());
         cp->mMediaAssetUuid = mMediaAssetUuid;
+        cp->setShapeTextColor(mShapeTextColor);
+        cp->setShapeText(mShapeText);
     }
 }
 

@@ -303,6 +303,7 @@ class UBSettings : public QObject
         // Last colours chosen for a shape, reapplied to the next one placed.
         UBSetting* shapeLastFill;
         UBSetting* shapeLastStroke;
+        UBSetting* shapeLastTextColor;
 
         UBSetting* boardInterpolatePenStrokes;
         UBSetting* boardSimplifyPenStrokes;

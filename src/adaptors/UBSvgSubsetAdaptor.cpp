@@ -2213,6 +2213,16 @@ void UBSvgSubsetAdaptor::UBSvgSubsetWriter::svgItemToLinkedSvg(UBGraphicsSvgItem
 
     mXmlWriter.writeAttribute(nsXLink, "href", fileName);
 
+    // A label belongs to the shape rather than being an item of its own. Older
+    // versions ignore the attribute and simply load the shape unlabelled.
+    if (!svgItem->shapeText().isEmpty())
+    {
+        mXmlWriter.writeAttribute(UBSettings::uniboardDocumentNamespaceUri, "shape-text",
+                                  svgItem->shapeText());
+        mXmlWriter.writeAttribute(UBSettings::uniboardDocumentNamespaceUri, "shape-text-color",
+                                  svgItem->shapeTextColor().name(QColor::HexArgb));
+    }
+
     graphicsItemToSvg(svgItem);
 
     mXmlWriter.writeEndElement();
@@ -2238,7 +2248,22 @@ UBGraphicsSvgItem* UBSvgSubsetAdaptor::UBSvgSubsetReader::svgItemFromSvg()
         return 0;
     }
 
+    // Read before graphicsItemFromSvg(), which sets the transform the label's
+    // layout depends on.
+    const auto shapeText = mXmlReader.attributes().value(mNamespaceUri, "shape-text").toString();
+    const auto shapeTextColor = mXmlReader.attributes().value(mNamespaceUri, "shape-text-color").toString();
+
     graphicsItemFromSvg(svgItem);
+
+    if (!shapeText.isEmpty())
+    {
+        if (!shapeTextColor.isEmpty())
+        {
+            svgItem->setShapeTextColor(QColor(shapeTextColor));
+        }
+
+        svgItem->setShapeText(shapeText);
+    }
 
     return svgItem;
 
