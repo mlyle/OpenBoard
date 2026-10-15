@@ -78,6 +78,8 @@
    <addaction name="separator"/>
    <addaction name="actionErase"/>
    <addaction name="separator"/>
+   <addaction name="actionVirtualKeyboard"/>
+   <addaction name="separator"/>
    <addaction name="actionBoard"/>
    <addaction name="actionWeb"/>
    <addaction name="actionDocument"/>

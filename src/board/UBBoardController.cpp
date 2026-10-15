@@ -424,6 +424,10 @@ void UBBoardController::setupToolbar()
 
     mMainWindow->actionBoard->setVisible(false);
 
+    // The keyboard button only makes sense where there is a virtual keyboard to
+    // show; it used to be left off the stylus palette for the same reason.
+    mMainWindow->actionVirtualKeyboard->setVisible(UBPlatformUtils::hasVirtualKeyboard());
+
     mMainWindow->webToolBar->hide();
     mMainWindow->documentToolBar->hide();
 

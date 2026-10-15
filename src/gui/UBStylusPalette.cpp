@@ -66,11 +66,8 @@ UBStylusPalette::UBStylusPalette(QWidget *parent, Qt::Orientation orient)
     actions << UBApplication::mainWindow->actionText;
     actions << UBApplication::mainWindow->actionCapture;
 
-    if(UBPlatformUtils::hasVirtualKeyboard())
-    {
-        actions << UBApplication::mainWindow->actionVirtualKeyboard;
-        UBApplication::mainWindow->actionVirtualKeyboard->setProperty("ungrouped", true);
-    }
+    // The keyboard button lives on the board toolbar in this mode; the desktop
+    // palette, which has no toolbar to fall back on, still carries its own.
 
     actions << UBApplication::mainWindow->actionSnap;
     UBApplication::mainWindow->actionSnap->setProperty("ungrouped", true);
