@@ -228,26 +228,78 @@ void UBKeyboardPalette::enterEvent(QEvent *event)
 void UBKeyboardPalette::enterEvent(QEnterEvent *event)
 #endif
 {
-    if (keyboardActive)
-        return;
+    setKeyboardActive(true);
+}
 
-    keyboardActive = true;
+void UBKeyboardPalette::setKeyboardActive(bool active)
+{
+    if (keyboardActive == active)
+    {
+        return;
+    }
+
+    keyboardActive = active;
+    mDeactivationPending = false;
 
     adjustSizeAndPosition();
 
-    emit keyboardActivated(true);
+    qWarning() << "keyboard palette active:" << active;
+
+    emit keyboardActivated(active);
+}
+
+void UBKeyboardPalette::releaseKeyboardHold()
+{
+    // Whatever blocked the leave is over; if the pointer is elsewhere the hold
+    // has to be given up, or the views it silenced stay silenced.
+    if (!keyboardActive || languagePopupActive || mIsMoving)
+    {
+        return;
+    }
+
+    if (!underMouse())
+    {
+        qWarning() << "keyboard palette releasing a held activation";
+        setKeyboardActive(false);
+    }
 }
 
 void UBKeyboardPalette::leaveEvent ( QEvent * )
 {
-    if (languagePopupActive || !keyboardActive || mIsMoving)
+    if (!keyboardActive)
+    {
         return;
+    }
 
-    keyboardActive = false;
+    // A leave during a drag, or with the language popup open, used to be dropped
+    // outright. The activation then stuck: the next enter saw keyboardActive
+    // already true and returned, so nothing ever emitted false again and the
+    // views this silences were never given back. Remember it instead and settle
+    // up once the drag or the popup finishes.
+    if (languagePopupActive || mIsMoving)
+    {
+        qWarning() << "keyboard palette deferring leave; moving:" << mIsMoving
+                   << "popup:" << languagePopupActive;
+        mDeactivationPending = true;
+        return;
+    }
 
-    adjustSizeAndPosition();
+    setKeyboardActive(false);
+}
 
-    emit keyboardActivated(false);
+void UBKeyboardPalette::mouseReleaseEvent(QMouseEvent* event)
+{
+    UBActionPalette::mouseReleaseEvent(event);
+
+    // mIsMoving has just cleared; a leave deferred during the drag can settle.
+    releaseKeyboardHold();
+}
+
+void UBKeyboardPalette::hideEvent(QHideEvent* event)
+{
+    // A hidden keyboard must not keep holding anything down.
+    setKeyboardActive(false);
+    UBActionPalette::hideEvent(event);
 }
 
 void  UBKeyboardPalette::moveEvent ( QMoveEvent * event )
@@ -736,6 +788,7 @@ void UBLocaleButton::onRelease()
     keyboard->languagePopupActive = true;
     QAction* action = localeMenu->exec(mapToGlobal(QPoint(0,0)));
     keyboard->languagePopupActive = false;
+    keyboard->releaseKeyboardHold();
     if (action!=NULL)
     {
         int nLocale = action->data().toInt();

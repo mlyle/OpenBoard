@@ -1965,6 +1965,12 @@ void UBBoardView::settingChanged (QVariant newValue)
 
 void UBBoardView::virtualKeyboardActivated(bool b)
 {
+    // This is what stops the view handling input at all, so every transition is
+    // worth a breadcrumb: a stuck "true" presents as a window that ignores
+    // everything.
+    qWarning() << "virtual keyboard activated:" << b << "on"
+               << (bIsDesktop ? "desktop overlay" : (bIsControl ? "control view" : "other view"));
+
     UBPlatformUtils::setWindowNonActivableFlag(this, b);
     mVirtualKeyboardActive = b;
     setInteractive(!b);

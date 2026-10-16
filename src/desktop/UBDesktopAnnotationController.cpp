@@ -331,6 +331,8 @@ UBBoardView* UBDesktopAnnotationController::drawingView()
 
 void UBDesktopAnnotationController::showWindow()
 {
+    qWarning() << "desktop overlay showing";
+
     mDesktopPalette->setDisplaySelectButtonVisible(true);
 
     connect(UBApplication::applicationController, SIGNAL(desktopMode(bool))
@@ -350,7 +352,20 @@ void UBDesktopAnnotationController::showWindow()
         mDesktopPalette->move(5, desktopRect.top() + 150);
 
         mWindowPositionInitialized = true;
-        mDesktopPalette->maximizeMe();
+    }
+
+    // The palette is the only way back to the board once the overlay covers the
+    // screen, so it has to come up every time, not just the first. A palette
+    // left folded against an edge, or an overlay left ignoring input by whatever
+    // silenced it, otherwise strands the user on a desktop they cannot click.
+    mDesktopPalette->maximizeMe();
+    mDesktopPalette->show();
+    mDesktopPalette->raise();
+
+    if (mTransparentDrawingView && !mTransparentDrawingView->isInteractive())
+    {
+        qWarning() << "desktop overlay was left non-interactive; restoring";
+        mTransparentDrawingView->setInteractive(true);
     }
 
     updateBackground();
@@ -443,8 +458,14 @@ void UBDesktopAnnotationController::updateBackground()
 
 void UBDesktopAnnotationController::hideWindow()
 {
+    qWarning() << "desktop overlay hiding";
+
     if (mTransparentDrawingView)
+    {
+        // Never leave it able to swallow input once it is gone from view.
+        mTransparentDrawingView->setInteractive(true);
         mTransparentDrawingView->hide();
+    }
 
     mDesktopPalette->hide();
 

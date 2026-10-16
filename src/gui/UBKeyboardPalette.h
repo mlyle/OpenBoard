@@ -143,9 +143,20 @@ protected:
 // 
     bool languagePopupActive;
     bool keyboardActive;
+    // A leave that arrived while the palette was being dragged, or while its
+    // language popup was open, and still has to be honoured.
+    bool mDeactivationPending{false};
+
+public:
+    void setKeyboardActive(bool active);
+    void releaseKeyboardHold();
+
+private:
 // 
     virtual void enterEvent(UB::EnterEvent *event) override;
     virtual void  leaveEvent ( QEvent * event ) override;
+    virtual void  hideEvent ( QHideEvent * event ) override;
+    virtual void  mouseReleaseEvent ( QMouseEvent * event ) override;
     virtual void  paintEvent(QPaintEvent *event) override;
     virtual void  moveEvent ( QMoveEvent * event ) override;
 

@@ -369,6 +369,11 @@ void UBApplicationController::showBoard()
     if (UBApplication::boardController)
         UBApplication::boardController->show();
 
+    if (mIsShowingDesktop)
+    {
+        qWarning() << "leaving desktop mode";
+    }
+
     mIsShowingDesktop = false;
     UBPlatformUtils::hideMenuBarAndDock();
     UBDrawingController::drawingController()->setInDesktopMode(false);
@@ -469,6 +474,7 @@ void UBApplicationController::showDesktop(bool dontSwitchFrontProcess)
     }
 
     mIsShowingDesktop = true;
+    qWarning() << "entering desktop mode";
     emit desktopMode(true);
 
     if (!dontSwitchFrontProcess) {
@@ -611,6 +617,11 @@ void UBApplicationController::hideDesktop()
     else if (mMainMode == Document)
     {
         showDocument();
+    }
+
+    if (mIsShowingDesktop)
+    {
+        qWarning() << "leaving desktop mode";
     }
 
     mIsShowingDesktop = false;
