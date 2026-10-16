@@ -696,6 +696,18 @@ bool UBBoardView::itemShouldBeMoved(QGraphicsItem *item)
         Q_FALLTHROUGH();
 
     case UBGraphicsSvgItem::Type:
+    {
+        // A library shape is a diagram object, not a picture: dragging its body
+        // moves it whether or not it is selected. Pictures keep the old
+        // behaviour, where a selected one is moved by its frame and dragging
+        // the body offers it to other applications.
+        UBGraphicsSvgItem* svgItem = qgraphicsitem_cast<UBGraphicsSvgItem*>(item);
+
+        if (svgItem && svgItem->isShape())
+            return true;
+    }
+        Q_FALLTHROUGH();
+
     case UBGraphicsPixmapItem::Type:
         if (currentTool == UBStylusTool::Play || !item->isSelected())
             return true;

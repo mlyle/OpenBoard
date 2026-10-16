@@ -115,6 +115,7 @@ UBGraphicsSvgItem::UBGraphicsSvgItem(const QString& pFilePath, QGraphicsItem* pa
         mFileData = f.readAll();
         f.close();
         mMediaAssetUuid = createMediaAssetUuid(mFileData);
+        mIsShape = isRecolourable();
     }
 }
 
@@ -128,6 +129,7 @@ UBGraphicsSvgItem::UBGraphicsSvgItem(const QByteArray& pFileData, QGraphicsItem*
     setSharedRenderer(renderer);
     mFileData = pFileData;
     mMediaAssetUuid = createMediaAssetUuid(mFileData);
+    mIsShape = isRecolourable();
 }
 
 
@@ -490,15 +492,23 @@ void UBGraphicsSvgItem::updateShapeTextLayout()
 
 void UBGraphicsSvgItem::mousePressEvent(QGraphicsSceneMouseEvent *event)
 {
-    QMimeData* pMime = new QMimeData();
-    QPixmap pixmap = toPixmapItem()->pixmap();
-    pMime->setImageData(pixmap.toImage());
-    Delegate()->setMimeData(pMime);
-    qreal k = (qreal)pixmap.width() / 100.0;
+    // Offering the item as drag-and-drop data makes the first move after a
+    // press start a drag out of the board. That is reasonable for a picture
+    // somebody might want to drop elsewhere, but a diagram shape is something
+    // to push around the canvas, so it is not offered.
+    if (!mIsShape)
+    {
+        QMimeData* pMime = new QMimeData();
+        QPixmap pixmap = toPixmapItem()->pixmap();
+        pMime->setImageData(pixmap.toImage());
+        Delegate()->setMimeData(pMime);
+        qreal k = (qreal)pixmap.width() / 100.0;
 
-    QSize newSize((int)(pixmap.width() / k), (int)(pixmap.height() / k));
+        QSize newSize((int)(pixmap.width() / k), (int)(pixmap.height() / k));
 
-    Delegate()->setDragPixmap(pixmap.scaled(newSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+        Delegate()->setDragPixmap(pixmap.scaled(newSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+    }
+
     if (!Delegate()->mousePressEvent(event))
         QGraphicsSvgItem::mousePressEvent(event);
 }

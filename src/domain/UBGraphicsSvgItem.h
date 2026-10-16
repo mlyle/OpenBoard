@@ -61,6 +61,9 @@ class UBGraphicsSvgItem: public QGraphicsSvgItem, public UBMediaAssetItem, publi
         // ub-body, with the colours on that group. Anything else, an imported
         // drawing say, has no such group and is left alone.
         bool isRecolourable() const;
+        // Cached form of isRecolourable(), for the mouse paths, which must not
+        // reparse the document on every event.
+        bool isShape() const { return mIsShape; }
         QColor shapeFill() const;
         QColor shapeStroke() const;
         bool setShapeColors(const QColor& fill, const QColor& stroke);
@@ -117,6 +120,7 @@ class UBGraphicsSvgItem: public QGraphicsSvgItem, public UBMediaAssetItem, publi
         // Renderers built by setShapeColors(), freed as they are superseded.
         QSvgRenderer* mOwnedRenderer{nullptr};
 
+        bool mIsShape{false};
         QString mShapeText;
         QColor mShapeTextColor{Qt::black};
         // A plain QGraphicsTextItem subclass on purpose: UBGraphicsTextItem is a
