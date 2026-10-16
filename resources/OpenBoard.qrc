@@ -20,6 +20,10 @@
         <file>images/locked.svg</file>
         <file>images/unlocked.svg</file>
         <file>images/duplicate.svg</file>
+        <file>images/shapeFill.svg</file>
+        <file>images/shapeLine.svg</file>
+        <file>images/shapeTextColor.svg</file>
+        <file>images/shapeLabel.svg</file>
         <file>images/resetAngle.svg</file>
         <file>images/resizeButton.svg</file>
         <file>images/resizeTop.svg</file>

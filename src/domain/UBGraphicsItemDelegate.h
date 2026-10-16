@@ -353,6 +353,10 @@ class UBGraphicsItemDelegate : public QObject
         QAction* mHideOnDisplayWhenSelectedAction;
         QAction* mSetAsBackgroundAction;
         QAction* mGotoContentSourceAction;
+        DelegateButton* mShapeFillButton{nullptr};
+        DelegateButton* mShapeLineButton{nullptr};
+        DelegateButton* mShapeTextColourButton{nullptr};
+        DelegateButton* mShapeLabelButton{nullptr};
 
 
         UBGraphicsDelegateFrame* mFrame;
@@ -372,6 +376,9 @@ protected slots:
         virtual void gotoContentSource();
         void applyShapeColour();
         void editShapeText();
+        void showShapeFillMenu();
+        void showShapeLineMenu();
+        void showShapeTextColourMenu();
 
     protected:
         enum class ShapeColourTarget
@@ -383,6 +390,7 @@ protected slots:
 
         static QIcon colourSwatch(const QColor& colour);
         void buildShapeColourMenu(QMenu* menu, ShapeColourTarget target, bool allowNone);
+        void popupShapeColourMenu(ShapeColourTarget target, DelegateButton* button, bool allowNone);
         void setShapeColour(UBGraphicsSvgItem* svgItem, ShapeColourTarget target, const QColor& colour);
 
 private:

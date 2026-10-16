@@ -238,6 +238,34 @@ void UBGraphicsItemDelegate::createControls()
         mButtons << mZOrderDownButton;
     }
 
+    // Library shapes get their colours and label on the frame itself. Burying
+    // them in the menu made the common case of styling a diagram a hunt
+    // through submenus.
+    UBGraphicsSvgItem* shapeItem = qgraphicsitem_cast<UBGraphicsSvgItem*>(mDelegated);
+
+    if (shapeItem && shapeItem->isShape() && !mShapeFillButton)
+    {
+        mShapeFillButton = new DelegateButton(":/images/shapeFill.svg", mDelegated, mFrame, Qt::BottomLeftSection);
+        mShapeFillButton->setToolTip(tr("Fill colour"));
+        connect(mShapeFillButton, SIGNAL(clicked()), this, SLOT(showShapeFillMenu()));
+        mButtons << mShapeFillButton;
+
+        mShapeLineButton = new DelegateButton(":/images/shapeLine.svg", mDelegated, mFrame, Qt::BottomLeftSection);
+        mShapeLineButton->setToolTip(tr("Line colour"));
+        connect(mShapeLineButton, SIGNAL(clicked()), this, SLOT(showShapeLineMenu()));
+        mButtons << mShapeLineButton;
+
+        mShapeTextColourButton = new DelegateButton(":/images/shapeTextColor.svg", mDelegated, mFrame, Qt::BottomLeftSection);
+        mShapeTextColourButton->setToolTip(tr("Text colour"));
+        connect(mShapeTextColourButton, SIGNAL(clicked()), this, SLOT(showShapeTextColourMenu()));
+        mButtons << mShapeTextColourButton;
+
+        mShapeLabelButton = new DelegateButton(":/images/shapeLabel.svg", mDelegated, mFrame, Qt::BottomLeftSection);
+        mShapeLabelButton->setToolTip(tr("Edit label"));
+        connect(mShapeLabelButton, SIGNAL(clicked()), this, SLOT(editShapeText()));
+        mButtons << mShapeLabelButton;
+    }
+
 
 
     buildButtons();
@@ -819,14 +847,6 @@ void UBGraphicsItemDelegate::decorateMenu(QMenu* menu)
 
     UBGraphicsSvgItem* svgItem = qgraphicsitem_cast<UBGraphicsSvgItem*>(delegated());
 
-    if (svgItem && svgItem->isRecolourable())
-    {
-        buildShapeColourMenu(menu->addMenu(tr("Fill")), ShapeColourTarget::Fill, true);
-        buildShapeColourMenu(menu->addMenu(tr("Line")), ShapeColourTarget::Stroke, true);
-        buildShapeColourMenu(menu->addMenu(tr("Text Colour")), ShapeColourTarget::Text, false);
-        menu->addAction(tr("Edit Label"), this, SLOT(editShapeText()));
-    }
-
     if (testUBFlags(GF_SHOW_CONTENT_SOURCE))
     {
         mGotoContentSourceAction = menu->addAction(tr("Web Inspector"), this, SLOT(gotoContentSource()));
@@ -889,6 +909,40 @@ void UBGraphicsItemDelegate::buildShapeColourMenu(QMenu* menu, ShapeColourTarget
     QAction* more = menu->addAction(tr("More..."), this, SLOT(applyShapeColour()));
     more->setProperty("ub-colour-target", int(target));
     more->setProperty("ub-colour-pick", true);
+}
+
+void UBGraphicsItemDelegate::showShapeFillMenu()
+{
+    popupShapeColourMenu(ShapeColourTarget::Fill, mShapeFillButton, true);
+}
+
+void UBGraphicsItemDelegate::showShapeLineMenu()
+{
+    popupShapeColourMenu(ShapeColourTarget::Stroke, mShapeLineButton, true);
+}
+
+void UBGraphicsItemDelegate::showShapeTextColourMenu()
+{
+    popupShapeColourMenu(ShapeColourTarget::Text, mShapeTextColourButton, false);
+}
+
+void UBGraphicsItemDelegate::popupShapeColourMenu(ShapeColourTarget target, DelegateButton* button,
+                                                  bool allowNone)
+{
+    UBBoardView* view = UBApplication::boardController->controlView();
+
+    if (!view || !button)
+    {
+        return;
+    }
+
+    QMenu menu(view);
+    buildShapeColourMenu(&menu, target, allowNone);
+
+    // Opens under the button it belongs to, rather than wherever the item menu
+    // would have appeared.
+    const QRect buttonRect = view->mapFromScene(button->sceneBoundingRect()).boundingRect();
+    menu.exec(view->mapToGlobal(buttonRect.bottomLeft()));
 }
 
 void UBGraphicsItemDelegate::applyShapeColour()
