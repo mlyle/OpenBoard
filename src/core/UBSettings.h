@@ -172,6 +172,11 @@ class UBSettings : public QObject
         static int boardMargin;
 
         static QColor paletteColor;
+        // Selected and hovered state for the tool buttons on the palettes. The
+        // accent matches the one both themes use for a checked control.
+        static QColor paletteSelectedColor;
+        static QColor paletteSelectedBorderColor;
+        static QColor paletteHoverColor;
         static QColor opaquePaletteColor;
 
         static QColor documentThumbnailsViewColor;

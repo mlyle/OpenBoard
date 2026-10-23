@@ -100,6 +100,9 @@ QColor UBSettings::documentSizeMarkColorDarkBackground = QColor(44, 44, 44, 200)
 QColor UBSettings::documentSizeMarkColorLightBackground = QColor(241, 241, 241);
 
 QColor UBSettings::paletteColor = QColor(127, 127, 127, 127);
+QColor UBSettings::paletteSelectedColor = QColor(0x2a, 0x82, 0xda, 115);
+QColor UBSettings::paletteSelectedBorderColor = QColor(0x2a, 0x82, 0xda, 217);
+QColor UBSettings::paletteHoverColor = QColor(0x2a, 0x82, 0xda, 38);
 QColor UBSettings::opaquePaletteColor = QColor(66, 66, 66, 255);
 
 QColor UBSettings::documentThumbnailsViewColor = QColor(214, 222, 235);

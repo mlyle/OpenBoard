@@ -30,6 +30,8 @@
 
 #include "UBActionPalette.h"
 
+#include "core/UBSettings.h"
+
 #include "core/memcheck.h"
 
 UBActionPalette::UBActionPalette(QList<QAction*> actions, Qt::Orientation orientation, QWidget * parent)
@@ -301,7 +303,28 @@ UBActionPaletteButton::UBActionPaletteButton(QAction* action, QWidget * parent)
 {
     setIconSize(QSize(32, 32));
     setDefaultAction(action);
-    setStyleSheet(QString("QToolButton {color: palette(button-text); font-weight: bold; font-family: Arial; background-color: transparent; border: none}"));
+    // The themes style a checked QToolButton, but a widget's own stylesheet wins
+    // over the application's, so without a rule here the selected tool would be
+    // left to whatever its icon happens to do.
+    //
+    // A tint rather than a solid fill: enough to read at a glance across both
+    // themes without the icons having to fight it, with a firmer border to give
+    // the shape a definite edge. Border and padding are set in every state so a
+    // button does not move or resize as it becomes checked.
+    const auto rgba = [](const QColor& c) {
+        return QString("rgba(%1, %2, %3, %4)")
+            .arg(c.red()).arg(c.green()).arg(c.blue()).arg(c.alpha());
+    };
+
+    setStyleSheet(QString(
+        "QToolButton { color: palette(button-text); font-weight: bold; font-family: Arial;"
+        " background-color: transparent; border: 1px solid transparent;"
+        " padding: 3px; border-radius: 8px }"
+        "QToolButton:checked { background-color: %1; border-color: %2 }"
+        "QToolButton:hover:!checked { background-color: %3 }")
+        .arg(rgba(UBSettings::paletteSelectedColor),
+             rgba(UBSettings::paletteSelectedBorderColor),
+             rgba(UBSettings::paletteHoverColor)));
 
     setFocusPolicy(Qt::NoFocus);
 
